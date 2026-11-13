@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UserNotifications
 
 @main
 struct TimeglowApp: App {
@@ -23,11 +24,26 @@ struct TimeglowApp: App {
 }
 
 @MainActor
-final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
     let monitor = MonitoringController()
     let navigation = WorkspaceNavigation()
     private var mainWindow: NSWindow?
     private var bookmarkWindows: BookmarkWindows?
+    private let reminderWindow = ReminderWindowController()
+    private var finishedLaunching = false
+    private var pendingReminder: ReminderContext?
+
+    override init() {
+        super.init()
+        // Assign before launch completes so clicks that cold-launch the app are routed too.
+        UNUserNotificationCenter.current().delegate = self
+        monitor.permissions.previewReminder = { [weak self] in self?.presentReminder($0) }
+    }
+
+    private func presentReminder(_ context: ReminderContext) {
+        if finishedLaunching { reminderWindow.present(context, monitor: monitor) }
+        else { pendingReminder = context }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let id = Bundle.main.bundleIdentifier,
@@ -37,6 +53,11 @@ final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
         monitor.start()
         bookmarkWindows = BookmarkWindows(monitor: monitor, openWorkspace: { [weak self] in self?.presentWorkspace($0) })
+        finishedLaunching = true
+        if let pendingReminder {
+            self.pendingReminder = nil
+            reminderWindow.present(pendingReminder, monitor: monitor)
+        }
         if ProcessInfo.processInfo.arguments.contains("--verify-monitoring") {
             let arguments = ProcessInfo.processInfo.arguments
             let index = arguments.firstIndex(of: "--verification-seconds")
@@ -101,6 +122,27 @@ final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         }
     }
 
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
+        let content = response.notification.request.content
+        let snapshot = (content.userInfo["timeglow.reminder.v1"] as? Data)
+            .flatMap { try? JSONDecoder().decode(ReminderContext.self, from: $0) }
+        let context = snapshot.flatMap { $0.isValid ? $0 : nil }
+            ?? ReminderContext.legacy(identifier: response.notification.request.identifier, body: content.body)
+        await MainActor.run {
+            if let context {
+                self.presentReminder(context)
+            } else {
+                // Older settings test notifications do not contain a usage snapshot.
+                self.presentWorkspace("settings")
+            }
+        }
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+
     func presentWorkspace(_ section: String) {
         navigation.section = section
         if mainWindow == nil {
@@ -137,7 +179,7 @@ final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         window.contentView = nil
         mainWindow = nil
     }
-    func applicationWillTerminate(_ notification: Notification) { bookmarkWindows?.close(); monitor.stop() }
+    func applicationWillTerminate(_ notification: Notification) { reminderWindow.close(); bookmarkWindows?.close(); monitor.stop() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 

@@ -9,6 +9,7 @@ final class PermissionServices: ObservableObject {
     @Published private(set) var loginEnabled = false
     @Published private(set) var loginNeedsApproval = false
     @Published var error: String?
+    var previewReminder: ((ReminderContext) -> Void)?
 
     func refresh() async {
         let center = UNUserNotificationCenter.current()
@@ -33,11 +34,14 @@ final class PermissionServices: ObservableObject {
         } catch { self.error = error.localizedDescription }
     }
 
-    func send(identifier: String, title: String, body: String) async throws {
+    func send(identifier: String, title: String, body: String, reminder: ReminderContext? = nil) async throws {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
+        if let reminder {
+            content.userInfo["timeglow.reminder.v1"] = try JSONEncoder().encode(reminder)
+        }
         try await UNUserNotificationCenter.current().add(.init(identifier: identifier, content: content, trigger: nil))
     }
 }

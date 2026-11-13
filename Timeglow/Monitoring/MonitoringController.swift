@@ -489,13 +489,16 @@ final class MonitoringController {
             notificationsInFlight.insert(key)
             let title = preferences.reminderKind == "percent" ? "今天合计已用每日限额的 \(node)%" : "今天合计已用 \(node) 分钟"
             let message = preferences.message
+            let context = ReminderContext(day: day, kind: preferences.reminderKind == "percent" ? .percent : .minutes,
+                                          node: node, quotaMinutes: preferences.quotaMinutes,
+                                          scopedSeconds: current, triggeredAt: Date(), message: message)
             writer.enqueue({ try $0.claimReminder(key) }) { [weak self] result in
                 guard let self else { return }
                 switch result {
                 case .success(true):
                     Task {
                         defer { self.notificationsInFlight.remove(key) }
-                        do { try await self.permissions.send(identifier: key, title: title, body: message) }
+                        do { try await self.permissions.send(identifier: key, title: title, body: message, reminder: context) }
                         catch {
                             writer.enqueue({ try $0.releaseReminder(key) }) { _ in }
                             self.error = "提醒未发送：\(error.localizedDescription)"

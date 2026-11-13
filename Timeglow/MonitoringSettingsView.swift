@@ -484,7 +484,9 @@ struct MonitoringSettingsView: View {
                 .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Graphite.line, lineWidth: 1))
             HStack(spacing: 14) {
-                Button("演示此节点提醒") { previewFeedback = previewTitle + "\n" + message }.disabled(activeNodes.isEmpty)
+                Button("演示此节点提醒") {
+                    if let context = reminderPreviewContext() { permissions.previewReminder?(context) }
+                }.disabled(activeNodes.isEmpty)
                 Button("发送系统测试通知 ↗") { Task { await sendTestNotification() } }.disabled(activeNodes.isEmpty)
                     .buttonStyle(.plain).font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
             }
@@ -680,13 +682,24 @@ struct MonitoringSettingsView: View {
         }
     }
 
+    private func reminderPreviewContext() -> ReminderContext? {
+        guard let node = Int(previewValue), node > 0 else { return nil }
+        let quota = monitor.preferences.quotaMinutes
+        let context = ReminderContext(day: ReminderContext.dayKey(at: Date()), kind: isPercent ? .percent : .minutes,
+                                      node: node, quotaMinutes: quota,
+                                      scopedSeconds: isPercent ? Double(node) / 100 * Double(quota) * 60 : Double(node) * 60,
+                                      triggeredAt: Date(), message: message, isTest: true)
+        return context.isValid ? context : nil
+    }
+
     private func sendTestNotification() async {
         await permissions.refresh()
         guard permissions.notificationStatus == .authorized || permissions.notificationStatus == .provisional else {
             previewFeedback = "尚未允许系统通知，可在左侧「权限与计时」中开启；也可以先演示此节点提醒。"; return
         }
         do {
-            try await permissions.send(identifier: "timeglow-settings-test-\(UUID().uuidString)", title: "Timeglow · 测试通知", body: previewTitle + "。\n" + message)
+            guard let context = reminderPreviewContext() else { return }
+            try await permissions.send(identifier: "timeglow-settings-test-\(UUID().uuidString)", title: "Timeglow · 测试通知", body: previewTitle + "。\n" + message, reminder: context)
             previewFeedback = "已发送系统测试通知，实际横幅显示取决于系统通知设置。"
         } catch { previewFeedback = "测试通知未发送：\(error.localizedDescription)" }
     }
