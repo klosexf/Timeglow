@@ -10,9 +10,16 @@ final class BookmarkWindows {
     private var overview: NSPanel!
     private var screenObserver: NSObjectProtocol?
     private var presentationObserver: NSKeyValueObservation?
+    private var overviewMouseMonitors: [Any] = []
     private var side: String
     private var heightFraction: Double
-    private var overviewVisible = false
+    private var overviewVisible = false {
+        didSet {
+            guard let handle = bookmark?.contentView as? BookmarkHandleView else { return }
+            handle.setAccessibilityValue(overviewVisible ? "已展开" : "已收起")
+            NSAccessibility.post(element: handle, notification: .valueChanged)
+        }
+    }
     private var dragOffset = NSPoint.zero
 
     init(monitor: MonitoringController, openWorkspace: @escaping (String) -> Void) {
@@ -28,6 +35,7 @@ final class BookmarkWindows {
         handle.setAccessibilityElement(true)
         handle.setAccessibilityRole(.button)
         handle.setAccessibilityLabel("Timeglow 书签，点击查看使用概览，可拖动换边")
+        handle.setAccessibilityValue("已收起")
         handle.onClick = { [weak self] in self?.toggleOverview() }
         handle.onDragStart = { [weak self] point in
             guard let self else { return }
@@ -53,7 +61,7 @@ final class BookmarkWindows {
         presentationObserver?.invalidate()
         presentationObserver = nil
         bookmark.orderOut(nil)
-        overview.orderOut(nil)
+        hideOverview()
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
     }
 
@@ -143,11 +151,38 @@ final class BookmarkWindows {
             overviewVisible = true
             positionOverview()
             overview.orderFrontRegardless()
+            monitorOverviewDismissal()
+        }
+    }
+
+    private func monitorOverviewDismissal() {
+        let mouseDown: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mouseDown, handler: { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self else { return event }
+                // The bookmark handles its own toggle on mouse-up. Dismissing on
+                // mouse-down there would make the same click reopen the overview.
+                if event.window !== self.overview && event.window !== self.bookmark {
+                    self.hideOverview()
+                }
+                return event
+            }
+        }) {
+            overviewMouseMonitors.append(local)
+        }
+        // Nonactivating panels don't reliably receive a focus-loss notification.
+        // Global monitoring covers clicks delivered to other applications.
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mouseDown, handler: { [weak self] _ in
+            MainActor.assumeIsolated { self?.hideOverview() }
+        }) {
+            overviewMouseMonitors.append(global)
         }
     }
 
     private func hideOverview() {
         overviewVisible = false
+        overviewMouseMonitors.forEach(NSEvent.removeMonitor)
+        overviewMouseMonitors.removeAll()
         overview.orderOut(nil)
         overview.contentView = nil
     }
@@ -212,11 +247,13 @@ private struct OverviewPanel: View {
                 HStack(spacing: 6) { Circle().fill(state.1).frame(width: 7, height: 7); Text(state.0).font(.system(size: 11)).foregroundStyle(Graphite.muted) }.padding(.bottom, 6)
             }
             SmoothQuotaBar(fraction: percent / 100, color: state.1)
-            HStack {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text("所选合计 · \(DurationText.format(used)) / \(monitor.preferences.quotaMinutes) 分钟")
-                Spacer()
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
                 Text(used < Double(monitor.preferences.quotaMinutes * 60) ? "剩余 \(DurationText.format(Double(monitor.preferences.quotaMinutes * 60) - used))" : "每日限额已用尽")
-            }.font(.system(size: 9)).foregroundStyle(Graphite.muted)
+                    .fixedSize()
+            }.font(.system(size: 12, weight: .medium)).foregroundStyle(Graphite.muted)
             Picker("统计周期", selection: $period) { Text("今天").tag(ReportPeriod.day); Text("本周").tag(ReportPeriod.week); Text("累计").tag(ReportPeriod.all) }.pickerStyle(.segmented).labelsHidden()
             HStack(alignment: .firstTextBaseline) {
                 Text("\(period == .day ? "今天" : period == .week ? "本周" : "累计") · 所有应用").font(.system(size: 11)).foregroundStyle(Graphite.muted)

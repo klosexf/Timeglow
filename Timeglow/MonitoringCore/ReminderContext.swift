@@ -34,7 +34,29 @@ struct ReminderContext: Codable, Equatable, Sendable {
 
     /// Notifications from older builds have an identifier and body but no snapshot.
     /// In particular, never calculate yesterday's minutes using today's quota.
-    static func legacy(identifier: String, body: String) -> Self? {
+    static func legacy(identifier: String, body: String, deliveredAt: Date? = nil) -> Self? {
+        if identifier.hasPrefix("timeglow-settings-test-"), let deliveredAt {
+            // Older settings test notifications put their node in the first line
+            // and the user's original message after it, without a userInfo payload.
+            let lines = body.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            guard lines.count == 2 else { return nil }
+            let title = String(lines[0]).trimmingCharacters(in: CharacterSet(charactersIn: "。."))
+            let percentPrefix = "今天合计已用每日限额的 "
+            let minutePrefix = "今天合计已用 "
+            let kind: Kind
+            let rawNode: String
+            if title.hasPrefix(percentPrefix), title.hasSuffix("%") {
+                kind = .percent
+                rawNode = String(title.dropFirst(percentPrefix.count).dropLast())
+            } else if title.hasPrefix(minutePrefix), title.hasSuffix(" 分钟") {
+                kind = .minutes
+                rawNode = String(title.dropFirst(minutePrefix.count).dropLast(" 分钟".count))
+            } else { return nil }
+            guard let node = Int(rawNode) else { return nil }
+            let value = Self(day: dayKey(at: deliveredAt), kind: kind, node: node,
+                             triggeredAt: deliveredAt, message: String(lines[1]), isTest: true)
+            return value.isValid ? value : nil
+        }
         let parts = identifier.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count == 3, let kind = Kind(rawValue: String(parts[1])), let node = Int(parts[2]) else { return nil }
         let value = Self(day: String(parts[0]), kind: kind, node: node, message: body)

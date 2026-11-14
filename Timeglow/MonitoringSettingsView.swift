@@ -42,14 +42,6 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         }
     }
     var pageTitle: String { self == .reminders ? "提醒设置" : title }
-    var subtitle: String {
-        switch self {
-        case .reminders: return "设置每天的用时限额，在需要时提醒自己。"
-        case .scope: return "选中的应用和网站，共用一份每日限额。"
-        case .permissions: return "决定记录方式，以及 Timeglow 如何提醒你。"
-        case .startup: return "按照你的习惯运行，让记录安心留在本机。"
-        }
-    }
 }
 
 private struct SettingsGroup: ViewModifier {
@@ -126,13 +118,9 @@ struct MonitoringSettingsView: View {
                 Rectangle().fill(Graphite.line.opacity(0.6)).frame(width: 1)
                 ScrollView {
                     VStack(alignment: .leading, spacing: SettingsStyle.sectionGap) {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text(category.pageTitle).font(SettingsStyle.title).foregroundStyle(Graphite.ink)
-                            Text(category.subtitle).font(SettingsStyle.body).foregroundStyle(Graphite.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        Text(category.pageTitle).font(SettingsStyle.title).foregroundStyle(Graphite.ink)
                         categoryContent
-                        saveFooter
+                        if category == .reminders { saveFooter }
                     }.frame(maxWidth: 760, alignment: .leading)
                         .padding(.horizontal, compact ? 28 : 40).padding(.top, 32).padding(.bottom, 26)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -154,8 +142,6 @@ struct MonitoringSettingsView: View {
 
     private var settingsSidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("偏好设置").font(SettingsStyle.metadata).foregroundStyle(Graphite.muted.opacity(0.65))
-                .padding(.horizontal, 12).padding(.bottom, 2)
             VStack(spacing: 5) {
                 ForEach(SettingsCategory.allCases) { item in
                     Button {
@@ -175,8 +161,6 @@ struct MonitoringSettingsView: View {
                 }
             }
             Spacer(minLength: 30)
-            Label("本地记录，安心使用", systemImage: "checkmark.shield")
-                .font(SettingsStyle.metadata).foregroundStyle(Graphite.muted.opacity(0.7)).padding(.horizontal, 12)
         }.padding(.horizontal, 14).padding(.top, 30).padding(.bottom, 25)
             .frame(maxHeight: .infinity, alignment: .topLeading).background(.black.opacity(0.12))
     }
@@ -193,29 +177,21 @@ struct MonitoringSettingsView: View {
     private var reminderPage: some View {
         VStack(alignment: .leading, spacing: SettingsStyle.sectionGap) {
             HStack(spacing: 13) {
-                Image(systemName: "bell").font(.system(size: 17)).foregroundStyle(Graphite.accent)
-                    .frame(width: 32, height: 32).background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("用时提醒").font(SettingsStyle.fieldLabel)
-                    hint("达到设定节点时，提醒你停一下")
-                }
+                Text("用时提醒").font(SettingsStyle.fieldLabel)
                 Spacer(minLength: 12)
                 Toggle("开启用时提醒", isOn: binding(\.notificationsEnabled)).labelsHidden().toggleStyle(.switch).controlSize(.small)
             }.modifier(SettingsGroup())
-            VStack(alignment: .leading, spacing: 10) {
-                fieldHeading("每日限额", detail: "所有选中项目合计")
-                VStack(alignment: .leading, spacing: 17) {
-                    HStack(alignment: .center, spacing: 20) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("每天最多用多久？").font(SettingsStyle.fieldLabel)
-                            hint("用时占比将以这个限额计算")
-                        }
-                        Spacer(minLength: 0)
-                        quotaControl
+            VStack(alignment: .leading, spacing: 17) {
+                HStack(alignment: .center, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("每日限额").font(SettingsStyle.fieldLabel)
+                        hint("所选应用与网站合计")
                     }
-                    stateRangeSettings
-                }.modifier(SettingsGroup())
-            }
+                    Spacer(minLength: 0)
+                    quotaControl
+                }
+                stateRangeSettings
+            }.modifier(SettingsGroup())
             VStack(alignment: .leading, spacing: 10) {
                 fieldHeading("提醒时机")
                 reminderSettings.modifier(SettingsGroup())
@@ -226,7 +202,7 @@ struct MonitoringSettingsView: View {
                 DisclosureGroup(isExpanded: $previewExpanded) {
                     notificationPreview.frame(maxWidth: 480).frame(maxWidth: .infinity).padding(.top, 15)
                 } label: {
-                    Label("查看通知效果", systemImage: "bell").font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
+                    Label("通知预览", systemImage: "bell").font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
                 }
             }
         }
@@ -266,8 +242,10 @@ struct MonitoringSettingsView: View {
             }
             Divider().overlay(Graphite.line)
             HStack(spacing: 12) {
-                Label(draftSaved ? "已保存，下次打开仍保留" : "设置仅保存在这台 Mac 上", systemImage: draftSaved ? "checkmark" : "checkmark.shield")
-                    .font(SettingsStyle.metadata).foregroundStyle(Graphite.muted)
+                if draftSaved {
+                    Label("已保存", systemImage: "checkmark")
+                        .font(SettingsStyle.metadata).foregroundStyle(Graphite.muted)
+                }
                 Spacer(minLength: 12)
                 Button(action: saveReminderDraft) {
                     HStack(spacing: 8) { Text("保存设置"); Image(systemName: "checkmark").font(.system(size: 10)) }
@@ -279,20 +257,19 @@ struct MonitoringSettingsView: View {
 
     private var scopeSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
-            fieldHeading("合计用时的应用和网站", detail: "\(monitor.preferences.selectedApps.count) 个应用 · \(monitor.preferences.websites.filter(\.enabled).count) 个网站")
-            hint("选中的应用和网站会合计用时，用于每日限额和提醒；关闭开关仍会正常记录用时。")
+            fieldHeading("计入每日限额", detail: "\(monitor.preferences.selectedApps.count) 个应用 · \(monitor.preferences.websites.filter(\.enabled).count) 个网站")
+            hint("选中项目共用每日限额；取消勾选仍会记录用时。")
             VStack(alignment: .leading, spacing: 0) {
                 Button { applicationsExpanded.toggle() } label: {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text("电脑里的应用").foregroundStyle(Graphite.ink).font(SettingsStyle.fieldLabel)
+                            Text("应用").foregroundStyle(Graphite.ink).font(SettingsStyle.fieldLabel)
                             Text(selectedAppNames).font(SettingsStyle.caption).foregroundStyle(Graphite.muted).lineLimit(1)
                         }
                         Spacer(minLength: 0)
-                        Text("选择应用").font(SettingsStyle.caption)
                         Image(systemName: applicationsExpanded ? "chevron.up" : "chevron.down").font(.system(size: 9))
                     }.padding(12).contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityLabel("电脑里的应用，选择应用").accessibilityValue(applicationsExpanded ? "已展开" : "已收起")
+                }.buttonStyle(.plain).accessibilityLabel("选择计入每日限额的应用").accessibilityValue(applicationsExpanded ? "已展开" : "已收起")
                 if applicationsExpanded {
                     HStack(spacing: 12) {
                         Button("添加应用…", action: addApplications)
@@ -325,7 +302,7 @@ struct MonitoringSettingsView: View {
                 }
             }.modifier(SettingsOutline(filled: false))
             VStack(alignment: .leading, spacing: 8) {
-                fieldHeading("合计用时的网站", detail: "按域名统计，包含其子域名", prominent: false)
+                fieldHeading("网站", detail: "包含子域名", prominent: false)
                 if monitor.preferences.websites.isEmpty { hint("还没有添加网站") }
                 ForEach(monitor.preferences.websites, id: \.domain) { site in
                     HStack {
@@ -441,7 +418,7 @@ struct MonitoringSettingsView: View {
 
     private var messageSettings: some View {
         VStack(alignment: .leading, spacing: 10) {
-            fieldHeading("写给自己的一句话", detail: "显示在提醒通知中")
+            fieldHeading("提醒文案")
             TextEditor(text: $message).font(SettingsStyle.body).lineSpacing(4).scrollContentBackground(.hidden)
                 .padding(.horizontal, 9).padding(.top, 8).padding(.bottom, 22).frame(height: 86)
                 .modifier(SettingsOutline())
@@ -450,7 +427,6 @@ struct MonitoringSettingsView: View {
                         .padding(.trailing, 11).padding(.bottom, 7).allowsHitTesting(false)
                 }.accessibilityLabel("写给自己的一句话")
             HStack(spacing: 9) {
-                Text("试试这句").font(SettingsStyle.metadata).foregroundStyle(Graphite.muted)
                 Button("温和一点") { message = "先停一下，把时间留给今天真正想做的事。" }
                 Button("直接一点") { message = "现在关掉它，去完成那件重要的事。" }
             }
@@ -460,7 +436,6 @@ struct MonitoringSettingsView: View {
     private var notificationPreview: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("通知预览").font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
                 Spacer()
                 Menu {
                     ForEach(activeNodes) { node in Button("达到 \(node.value)\(isPercent ? "%" : " 分钟")") { previewNode = node.value } }
@@ -494,7 +469,7 @@ struct MonitoringSettingsView: View {
                 Text(previewFeedback).font(SettingsStyle.caption).foregroundStyle(Graphite.accent)
                     .lineSpacing(4).fixedSize(horizontal: false, vertical: true)
             }
-            hint("通知按节点触发，书签颜色按状态范围变化。每个节点每天只通知一次，系统横幅显示取决于通知设置和专注模式。")
+            hint("系统横幅是否显示，取决于通知设置和专注模式。")
         }
     }
 
@@ -556,10 +531,7 @@ struct MonitoringSettingsView: View {
         VStack(alignment: .leading, spacing: SettingsStyle.sectionGap) {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("登录 Mac 时自动启动").font(SettingsStyle.fieldLabel)
-                        hint("在菜单栏继续记录你的使用时长")
-                    }
+                    Text("登录 Mac 时自动启动").font(SettingsStyle.fieldLabel)
                     Spacer(minLength: 0)
                     Toggle("登录 Mac 时自动启动", isOn: Binding(get: { permissions.loginEnabled }, set: { enabled in
                         Task { await permissions.setLoginEnabled(enabled) }
@@ -579,13 +551,7 @@ struct MonitoringSettingsView: View {
                     Button("查看位置 ↗") { NSWorkspace.shared.activateFileViewerSelecting([monitor.databaseURL]) }
                 }
             }.modifier(SettingsGroup())
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "checkmark.shield").font(.system(size: 17)).foregroundStyle(Graphite.muted)
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("你的时间，只属于你。").font(SettingsStyle.fieldLabel)
-                    hint("关闭窗口后，仍可通过贴边书签查看用时。点击菜单栏图标可以暂停或退出；退出 Timeglow 后停止记录。")
-                }
-            }.padding(.top, 4)
+            hint("关闭窗口后继续记录，可通过书签或菜单栏查看；退出 Timeglow 后停止记录。")
         }
     }
 
@@ -616,7 +582,7 @@ struct MonitoringSettingsView: View {
 
     private var notificationDescription: String {
         switch permissions.notificationStatus {
-        case .authorized, .provisional: return "系统通知已允许，每个节点每天提醒一次"
+        case .authorized, .provisional: return "系统通知已允许"
         case .denied: return "系统通知未允许，计时仍然继续"
         default: return "尚未申请系统通知权限"
         }

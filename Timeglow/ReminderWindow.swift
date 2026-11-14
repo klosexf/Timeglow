@@ -18,6 +18,10 @@ final class ReminderWindowController: NSObject, NSWindowDelegate {
             panel.backgroundColor = .clear
             panel.hasShadow = true
             panel.level = .floating
+            // A notification click is handled while Notification Center / another
+            // app still owns focus. Keep this reminder visible until dismissed,
+            // instead of NSPanel's default hide-on-deactivation behavior.
+            panel.hidesOnDeactivate = false
             panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             panel.isMovableByWindowBackground = false
             panel.appearance = NSAppearance(named: .darkAqua)

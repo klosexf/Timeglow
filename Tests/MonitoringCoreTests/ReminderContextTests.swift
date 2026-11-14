@@ -63,4 +63,18 @@ struct ReminderContextTests {
         original.quotaMinutes = 0
         #expect(!original.isValid)
     }
+
+    @Test func legacySystemTestsRecoverTheirNodeAndOriginalMessageWithoutSettingsFallback() throws {
+        for (title, kind, node) in [("今天合计已用每日限额的 20%", ReminderContext.Kind.percent, 20),
+                                   ("今天合计已用 30 分钟", ReminderContext.Kind.minutes, 30)] {
+            let message = "先想一想。\n身体先行。"
+            let value = try #require(ReminderContext.legacy(identifier: "timeglow-settings-test-old",
+                                                            body: title + "。\n" + message, deliveredAt: now))
+            #expect(value.kind == kind)
+            #expect(value.node == node)
+            #expect(value.message == message)
+            #expect(value.isTest)
+        }
+        #expect(ReminderContext.legacy(identifier: "timeglow-settings-test-old", body: "无有效节点", deliveredAt: now) == nil)
+    }
 }

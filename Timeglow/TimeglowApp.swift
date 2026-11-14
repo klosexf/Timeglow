@@ -41,8 +41,14 @@ final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 
     private func presentReminder(_ context: ReminderContext) {
-        if finishedLaunching { reminderWindow.present(context, monitor: monitor) }
-        else { pendingReminder = context }
+        guard finishedLaunching else {
+            pendingReminder = context
+            return
+        }
+        // Activating the app also raises an existing workspace. Order it out
+        // before activation, preserving its unsaved settings draft in memory.
+        mainWindow?.orderOut(nil)
+        reminderWindow.present(context, monitor: monitor)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -56,7 +62,7 @@ final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         finishedLaunching = true
         if let pendingReminder {
             self.pendingReminder = nil
-            reminderWindow.present(pendingReminder, monitor: monitor)
+            presentReminder(pendingReminder)
         }
         if ProcessInfo.processInfo.arguments.contains("--verify-monitoring") {
             let arguments = ProcessInfo.processInfo.arguments
@@ -128,13 +134,11 @@ final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         let snapshot = (content.userInfo["timeglow.reminder.v1"] as? Data)
             .flatMap { try? JSONDecoder().decode(ReminderContext.self, from: $0) }
         let context = snapshot.flatMap { $0.isValid ? $0 : nil }
-            ?? ReminderContext.legacy(identifier: response.notification.request.identifier, body: content.body)
+            ?? ReminderContext.legacy(identifier: response.notification.request.identifier, body: content.body,
+                                      deliveredAt: response.notification.date)
         await MainActor.run {
             if let context {
                 self.presentReminder(context)
-            } else {
-                // Older settings test notifications do not contain a usage snapshot.
-                self.presentWorkspace("settings")
             }
         }
     }
