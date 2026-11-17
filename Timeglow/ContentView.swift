@@ -83,7 +83,7 @@ struct UsageRows: View {
                             }
                             let other = max(0, usage.seconds - usage.websites.reduce(0) { $0 + $1.seconds })
                             if other > 0 { HStack { Text("未细分到网站"); Spacer(); Text(DurationText.format(other)) } }
-                        }.font(.system(size: 10)).foregroundStyle(Graphite.muted).padding(.leading, 36).padding(.vertical, 10)
+                        }.font(.system(size: compact ? 10 : 11)).foregroundStyle(Graphite.muted).padding(.leading, 36).padding(.vertical, 10)
                     } label: { row(usage, largest: largest) }.padding(.vertical, compact ? 8 : 10)
                 } else { row(usage, largest: largest).padding(.vertical, compact ? 8 : 10) }
                 Divider().opacity(0.4)
@@ -92,7 +92,7 @@ struct UsageRows: View {
     }
     private func row(_ usage: ApplicationUsage, largest: Double) -> some View {
         HStack(spacing: 10) {
-            AppIcon(bundleID: usage.id).frame(width: compact ? 25 : 29, height: compact ? 25 : 29)
+            AppIcon(bundleID: usage.id).frame(width: 25, height: 25)
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 5) {
                     Text(usage.name).font(.system(size: compact ? 11 : 12)).lineLimit(1)

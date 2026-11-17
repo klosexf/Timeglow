@@ -3,6 +3,23 @@ import Charts
 import AppKit
 import UniformTypeIdentifiers
 
+private enum StatisticsStyle {
+    static let sectionGap: CGFloat = 16
+    static let cardInset: CGFloat = 16
+    static let applicationListHeight: CGFloat = 156
+    static let title = Font.system(size: 13, weight: .semibold)
+    static let label = Font.system(size: 12)
+    static let detail = Font.system(size: 11)
+}
+
+private struct StatisticsCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content.frame(maxWidth: .infinity, alignment: .leading).padding(StatisticsStyle.cardInset)
+            .background(.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Graphite.line, lineWidth: 1))
+    }
+}
+
 struct StatisticsView: View {
     let monitor: MonitoringController
     @State private var period: ReportPeriod = .day
@@ -10,95 +27,122 @@ struct StatisticsView: View {
     @State private var report: UsageReport?
     @State private var exportError: String?
     @State private var reportError: String?
-    private let columns = [GridItem(.flexible(), spacing: WorkspaceStyle.cardGap), GridItem(.flexible())]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("把时间看清楚").font(.system(size: 11)).foregroundStyle(Graphite.muted)
-                        Text(period == .all ? "一路以来的时间去向" : period == .week ? "这一周的时间去向" : "这一天的时间去向").font(.system(size: 25, weight: .medium))
+        GeometryReader { geometry in
+            let compact = geometry.size.width < 950
+            ScrollView {
+                VStack(alignment: .leading, spacing: StatisticsStyle.sectionGap) {
+                    HStack {
+                        Text(period == .all ? "一路以来的时间去向" : period == .week ? "这一周的时间去向" : "这一天的时间去向")
+                            .font(.system(size: 25, weight: .semibold))
+                        Spacer()
+                        Button(action: exportCSV) {
+                            HStack(spacing: 7) { Text("导出 CSV"); Image(systemName: "arrow.up.right").font(.system(size: 10)) }
+                        }.buttonStyle(WorkspaceActionButtonStyle())
                     }
-                    Spacer()
-                    Button(action: exportCSV) {
-                        HStack(spacing: 7) { Text("导出 CSV"); Image(systemName: "arrow.up.right").font(.system(size: 10)) }
-                    }.buttonStyle(WorkspaceActionButtonStyle())
-                }
-                HStack {
-                    Picker("统计周期", selection: $period) { ForEach(ReportPeriod.allCases) { Text($0.title).tag($0) } }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .fixedSize()
-                        .frame(width: 210, alignment: .leading)
-                    Spacer()
-                    if period != .all {
-                        Button { move(-1) } label: { Image(systemName: "chevron.left") }.help("上一周期")
-                        Text(anchor, format: .dateTime.year().month().day()).font(.system(size: 11)).foregroundStyle(Graphite.muted)
-                        Button { move(1) } label: { Image(systemName: "chevron.right") }.disabled(!canMoveForward).help("下一周期")
-                        Button("回到今天") { anchor = Date() }.font(.system(size: 10))
-                    }
-                }
-                if let reportError { Text(reportError).font(.caption).foregroundStyle(.orange) }
-                if let report {
-                    HStack(spacing: 0) {
-                        metric("所有应用总时长", DurationText.format(report.summary.totalSeconds), "前台使用时长 · 网站计入浏览器")
-                        metricDivider
-                        if period != .day {
-                            metric("日均使用", DurationText.format(report.averageSeconds), "按有记录的 \(report.days.filter(\.hasRecord).count) 天计算")
-                            metricDivider
+                    HStack {
+                        Picker("统计周期", selection: $period) { ForEach(ReportPeriod.allCases) { Text($0.title).tag($0) } }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                            .frame(width: 210, alignment: .leading)
+                        Spacer()
+                        if period != .all {
+                            Button { move(-1) } label: { Image(systemName: "chevron.left") }.help("上一周期")
+                            Text(anchor, format: .dateTime.year().month().day()).font(StatisticsStyle.label).foregroundStyle(Graphite.muted)
+                            Button { move(1) } label: { Image(systemName: "chevron.right") }.disabled(!canMoveForward).help("下一周期")
+                            Button("回到今天") { anchor = Date() }.font(StatisticsStyle.detail)
                         }
-                        metric("所选应用和网站合计用时", DurationText.format(report.summary.scopedSeconds), "占全部用时 \(Int(report.summary.scopedSeconds / max(1, report.summary.totalSeconds) * 100))%")
-                    }.padding(.vertical, 6)
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: WorkspaceStyle.cardGap) {
-                        TrendCard(report: report, period: period)
-                        CategoryCard(categories: report.categories)
-                        VStack(alignment: .leading, spacing: 12) {
-                            cardTitle("每个应用，都有记录", "按使用时长排序 · 浏览器可展开网站")
-                            if report.summary.applications.isEmpty { emptyRecord.frame(maxWidth: .infinity, minHeight: 140) }
-                            else {
-                                GeometryReader { geometry in
-                                    ScrollView {
-                                        UsageRows(applications: report.summary.applications, selectedApps: monitor.preferences.selectedApps, websiteRules: monitor.preferences.websites, addApplication: { usage in
-                                            monitor.addApplications([.init(bundleID: usage.id, name: usage.name)])
-                                        }, addWebsite: monitor.addWebsite)
-                                        .frame(width: max(0, geometry.size.width - 16))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                }.frame(height: 210)
-                            }
-                        }.graphiteCard()
-                        VStack(alignment: .leading, spacing: 14) {
-                            cardTitle("每日合计用时记录", "所选应用和网站合计用时 / 当日用时限额")
-                            ScrollView {
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 50))], spacing: 8) {
-                                    ForEach(report.days) { day in
-                                        let state = Graphite.state(percent: day.percent, preferences: monitor.preferences)
-                                        Button {
-                                            anchor = day.date; period = .day
-                                        } label: {
-                                            VStack(spacing: 6) {
-                                                Text(day.date, format: .dateTime.month(.twoDigits).day(.twoDigits)).font(.system(size: 9))
-                                                Text(day.hasRecord ? "\(Int(day.percent))%" : "—").font(.system(size: 11, weight: .medium))
-                                            }.frame(maxWidth: .infinity).frame(height: 55)
-                                                .foregroundStyle(day.hasRecord ? state.1 : Graphite.muted)
-                                                .background((day.hasRecord ? state.1 : .gray).opacity(0.075), in: RoundedRectangle(cornerRadius: 7))
-                                        }.buttonStyle(.plain).disabled(!day.hasRecord)
-                                    }
-                                }
-                            }.frame(height: 150)
-                            HStack(spacing: 12) {
-                                legend("充足", Graphite.safe); legend("留意", Graphite.warning); legend("用尽", Graphite.spent)
-                            }.font(.system(size: 9))
-                            Text("\(report.days.filter { $0.hasRecord && $0.percent >= 100 }.count) 天合计用时达到或超过每日限额").font(.system(size: 11)).foregroundStyle(Graphite.muted)
-                        }.graphiteCard()
                     }
-                    Text("\(monitor.state) · \(monitor.currentApp)。尚未记录的时段显示为空；网站明细需先开启浏览器授权。").font(.system(size: 10)).foregroundStyle(Graphite.muted)
-                }
-            }.padding(WorkspaceStyle.pageInset)
+                    if let reportError { Text(reportError).font(.caption).foregroundStyle(.orange) }
+                    if let report {
+                        HStack(spacing: 0) {
+                            metric("所有应用总时长", DurationText.format(report.summary.totalSeconds), "前台使用时长 · 网站计入浏览器")
+                            metricDivider
+                            if period != .day {
+                                metric("日均使用", DurationText.format(report.averageSeconds), "按有记录的 \(report.days.filter(\.hasRecord).count) 天计算")
+                                metricDivider
+                            }
+                            metric("所选应用和网站合计用时", DurationText.format(report.summary.scopedSeconds), "占全部用时 \(Int(report.summary.scopedSeconds / max(1, report.summary.totalSeconds) * 100))%")
+                        }.padding(.vertical, 3)
+                        HStack(alignment: .top, spacing: WorkspaceStyle.cardGap) {
+                            VStack(spacing: WorkspaceStyle.cardGap) {
+                                TrendCard(report: report, period: period, compact: compact)
+                                applicationCard(report)
+                            }.frame(minWidth: 0, maxWidth: .infinity)
+                            VStack(spacing: WorkspaceStyle.cardGap) {
+                                CategoryCard(categories: report.categories, compact: compact)
+                                dailyQuotaCard(report)
+                            }.frame(minWidth: 0, maxWidth: .infinity)
+                        }
+                        Text("\(monitor.state) · \(monitor.currentApp)。尚未记录的时段显示为空；网站明细需先开启浏览器授权。").font(StatisticsStyle.detail).foregroundStyle(Graphite.muted)
+                    }
+                }.padding(.horizontal, compact ? 24 : WorkspaceStyle.pageInset).padding(.vertical, 24)
+            }
         }
         .task(id: monitor.reportRefreshKey(period: period, anchor: anchor)) { await reload() }
         .alert("未能导出", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) { Button("好") { exportError = nil } } message: { Text(exportError ?? "") }
+    }
+
+    private func applicationCard(_ report: UsageReport) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            cardTitle("每个应用，都有记录", "按使用时长排序 · 浏览器可展开网站")
+            if report.summary.applications.isEmpty {
+                emptyRecord.frame(maxWidth: .infinity, minHeight: StatisticsStyle.applicationListHeight)
+            } else {
+                GeometryReader { geometry in
+                    ScrollView {
+                        UsageRows(applications: report.summary.applications, selectedApps: monitor.preferences.selectedApps, websiteRules: monitor.preferences.websites, addApplication: { usage in
+                            monitor.addApplications([.init(bundleID: usage.id, name: usage.name)])
+                        }, addWebsite: monitor.addWebsite)
+                        .frame(width: max(0, geometry.size.width - 16))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }.frame(height: StatisticsStyle.applicationListHeight)
+            }
+        }.modifier(StatisticsCard())
+    }
+
+    private func dailyQuotaCard(_ report: UsageReport) -> some View {
+        let columnCount = max(1, min(7, report.days.count))
+        let rows = max(1, min(3, Int(ceil(Double(report.days.count) / 7))))
+        let columns = Array(repeating: report.days.count <= 3 ? GridItem(.fixed(56), spacing: 8) : GridItem(.flexible(), spacing: 8), count: columnCount)
+        return VStack(alignment: .leading, spacing: 12) {
+            cardTitle("每日合计用时记录", "所选应用和网站合计用时 / 当日用时限额")
+            ScrollView {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+                    ForEach(report.days) { day in
+                        let state = Graphite.state(percent: day.percent, preferences: monitor.preferences)
+                        Button {
+                            anchor = day.date; period = .day
+                        } label: {
+                            VStack(spacing: 5) {
+                                Text(day.date, format: .dateTime.month(.twoDigits).day(.twoDigits)).font(StatisticsStyle.detail)
+                                Text(day.hasRecord ? "\(Int(day.percent))%" : "—").font(.system(size: 12, weight: .medium))
+                            }.frame(maxWidth: .infinity).frame(height: 51)
+                                .foregroundStyle(day.hasRecord ? state.1 : Graphite.muted)
+                                .background((day.hasRecord ? state.1 : .gray).opacity(0.075), in: RoundedRectangle(cornerRadius: 7))
+                        }.buttonStyle(.plain).disabled(!day.hasRecord)
+                    }
+                }
+            }.frame(height: CGFloat(rows * 51 + (rows - 1) * 8))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) { quotaLegend; quotaConclusion(report) }
+                VStack(alignment: .leading, spacing: 7) { quotaLegend; quotaConclusion(report) }
+            }
+        }.modifier(StatisticsCard())
+    }
+
+    private var quotaLegend: some View {
+        HStack(spacing: 10) {
+            legend("充足", Graphite.safe); legend("留意", Graphite.warning); legend("用尽", Graphite.spent)
+        }.font(StatisticsStyle.detail).fixedSize()
+    }
+
+    private func quotaConclusion(_ report: UsageReport) -> some View {
+        Text("\(report.days.filter { $0.hasRecord && $0.percent >= 100 }.count) 天合计用时达到或超过每日限额")
+            .font(StatisticsStyle.detail).foregroundStyle(Graphite.muted).fixedSize(horizontal: false, vertical: true)
     }
 
     private var canMoveForward: Bool {
@@ -115,10 +159,10 @@ struct StatisticsView: View {
         catch { reportError = "无法读取统计：\(error.localizedDescription)" }
     }
     private func metric(_ title: String, _ value: String, _ note: String) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text(title).font(.system(size: 11)).foregroundStyle(Graphite.muted)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(StatisticsStyle.label).foregroundStyle(Graphite.muted)
             Text(value).font(.system(size: 30, weight: .regular)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
-            Text(note).font(.system(size: 10)).foregroundStyle(Graphite.muted)
+            Text(note).font(StatisticsStyle.detail).foregroundStyle(Graphite.muted)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private var metricDivider: some View {
@@ -152,15 +196,16 @@ struct StatisticsView: View {
 }
 
 private func cardTitle(_ title: String, _ subtitle: String) -> some View {
-    VStack(alignment: .leading, spacing: 6) {
-        Text(title).font(.system(size: 13, weight: .medium))
-        Text(subtitle).font(.system(size: 10)).foregroundStyle(Graphite.muted)
+    VStack(alignment: .leading, spacing: 4) {
+        Text(title).font(StatisticsStyle.title)
+        Text(subtitle).font(StatisticsStyle.detail).foregroundStyle(Graphite.muted)
     }
 }
 
 private struct TrendCard: View {
     let report: UsageReport
     let period: ReportPeriod
+    let compact: Bool
     private let totalColor = Graphite.accent.opacity(0.7)
     private let scopedColor = Graphite.safe.opacity(0.85)
     @State private var selectedKey: String?
@@ -182,19 +227,21 @@ private struct TrendCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(period == .day ? "时间集中在哪些时段" : "每天花了多少时间")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(StatisticsStyle.title)
                 HStack(alignment: .top, spacing: 12) {
                     legendItem("全部应用用时", color: totalColor)
                     legendItem("所选应用和网站用时（已含于总量）", color: scopedColor)
                 }
-                .font(.system(size: 10))
+                .font(StatisticsStyle.detail)
                 .foregroundStyle(Graphite.muted)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("灰色：全部应用用时。绿色：所选应用和网站用时，已包含在总量中。")
             }
+            VStack(alignment: .leading, spacing: 4) {
+            Text("分钟").font(StatisticsStyle.detail).foregroundStyle(Graphite.muted)
             Chart(report.trend) { point in
                 BarMark(x: .value("时间", chartKey(point)), yStart: .value("起点", 0), yEnd: .value("分钟", point.total / 60), width: .ratio(0.6)).foregroundStyle(totalColor)
                     .accessibilityLabel(Text(point.date, format: period == .day ? .dateTime.hour() : .dateTime.month().day()))
@@ -212,11 +259,17 @@ private struct TrendCard: View {
                 AxisMarks(values: axisKeys) { value in
                     AxisValueLabel {
                         if let key = value.as(String.self), let point = report.trend.first(where: { chartKey($0) == key }) {
-                            Text(point.date, format: period == .day ? .dateTime.hour() : .dateTime.month().day()).font(.system(size: 9))
+                            Text(point.date, format: period == .day ? .dateTime.hour() : .dateTime.month(.twoDigits).day(.twoDigits))
+                                .font(StatisticsStyle.detail).fixedSize()
                         }
                     }
                 }
-            }.chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) }
+            }.chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) {
+                    AxisGridLine()
+                    AxisValueLabel().font(StatisticsStyle.detail)
+                }
+            }
             .chartOverlay { proxy in
                 GeometryReader { geometry in
                     Rectangle().fill(.clear).contentShape(Rectangle())
@@ -232,9 +285,10 @@ private struct TrendCard: View {
                         }
                 }
             }
-            .frame(height: 150)
+            .frame(height: 132)
             .onChange(of: period) { selectedKey = nil }
             .onChange(of: report.interval.start) { selectedKey = nil }
+            }
             Group {
                 if let point = selectedPoint {
                     HStack(spacing: 6) {
@@ -242,8 +296,8 @@ private struct TrendCard: View {
                         Text("· 全部 \(DurationText.format(point.total)) · 合计 \(DurationText.format(point.scoped))")
                     }
                 } else { Text("将指针移到柱形上，查看全部与合计用时") }
-            }.font(.system(size: 10)).foregroundStyle(Graphite.muted).frame(minHeight: 15, alignment: .leading)
-        }.graphiteCard()
+            }.font(StatisticsStyle.detail).foregroundStyle(Graphite.muted).frame(minHeight: 16, alignment: .leading)
+        }.frame(minHeight: compact ? 240 : 224, alignment: .topLeading).modifier(StatisticsCard())
     }
 
     private func select(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
@@ -261,23 +315,25 @@ private struct TrendCard: View {
 
 private struct CategoryCard: View {
     let categories: [UsageCategory]
+    let compact: Bool
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let diameter: CGFloat = compact ? 118 : 139
+        VStack(alignment: .leading, spacing: 18) {
             cardTitle("时间花在哪里", "按应用用途归类")
-            HStack(spacing: 18) {
-                if categories.isEmpty { Circle().stroke(Graphite.line, lineWidth: 14).overlay(Text("暂无记录").font(.system(size: 11)).foregroundStyle(Graphite.muted)).frame(width: 140, height: 140) }
+            HStack(spacing: compact ? 12 : 20) {
+                if categories.isEmpty { Circle().stroke(Graphite.line, lineWidth: 14).overlay(Text("暂无记录").font(StatisticsStyle.detail).foregroundStyle(Graphite.muted)).frame(width: diameter, height: diameter) }
                 else {
                     Chart(Array(categories.enumerated()), id: \.element.id) { index, category in
                         SectorMark(angle: .value("用时", category.seconds), innerRadius: .ratio(0.76), angularInset: 2).foregroundStyle(Graphite.categoryColor(category.name))
-                    }.frame(width: 140, height: 140)
+                    }.frame(width: diameter, height: diameter)
                         .overlay {
                             if let largest = categories.max(by: { $0.seconds < $1.seconds }) {
                                 VStack(spacing: 5) {
-                                    Text("最多时间").font(.system(size: 9)).foregroundStyle(Graphite.muted)
+                                    Text("最多时间").font(.system(size: 10)).foregroundStyle(Graphite.muted)
                                     Text(largest.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
                                     Text("\(Int(largest.seconds / max(0.000001, categories.reduce(0) { $0 + $1.seconds }) * 100))%")
                                         .font(.system(size: 11)).foregroundStyle(Graphite.muted)
-                                }.frame(width: 100)
+                                }.frame(width: diameter * 0.72)
                             }
                         }
                 }
@@ -288,10 +344,10 @@ private struct CategoryCard: View {
                             Text(category.name).lineLimit(1)
                             Spacer(minLength: 2)
                             Text("\(Int(category.seconds / max(0.000001, categories.reduce(0) { $0 + $1.seconds }) * 100))%")
-                        }.font(.system(size: 11)).foregroundStyle(Graphite.muted)
+                        }.font(compact ? StatisticsStyle.detail : StatisticsStyle.label).foregroundStyle(Graphite.muted)
                     }
                 }
-            }.frame(height: 180)
-        }.graphiteCard()
+            }.frame(height: 160)
+        }.frame(minHeight: compact ? 240 : 224, alignment: .topLeading).modifier(StatisticsCard())
     }
 }

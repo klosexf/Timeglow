@@ -159,14 +159,15 @@ final class BookmarkWindows {
         let mouseDown: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         if let local = NSEvent.addLocalMonitorForEvents(matching: mouseDown, handler: { [weak self] event in
             MainActor.assumeIsolated {
-                guard let self else { return event }
+                guard let self else { return }
                 // The bookmark handles its own toggle on mouse-up. Dismissing on
                 // mouse-down there would make the same click reopen the overview.
                 if event.window !== self.overview && event.window !== self.bookmark {
                     self.hideOverview()
                 }
-                return event
             }
+            // NSEvent cannot be the Sendable result of assumeIsolated.
+            return event
         }) {
             overviewMouseMonitors.append(local)
         }

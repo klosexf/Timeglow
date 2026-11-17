@@ -260,6 +260,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Timeglow 读取当前浏览器标签的网址，仅保存域名，用于统计网站前台使用时间。";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -295,6 +296,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Timeglow 读取当前浏览器标签的网址，仅保存域名，用于统计网站前台使用时间。";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";

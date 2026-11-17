@@ -11,7 +11,7 @@ private struct ReminderNodeDraft: Identifiable, Equatable {
 
 // Approved concept A: a category sidebar and one focused column of settings.
 private enum SettingsStyle {
-    static let sectionGap: CGFloat = 22
+    static let sectionGap: CGFloat = 20
     static let fieldHeight: CGFloat = 36
     static let radius: CGFloat = 8
     static let title = Font.system(size: 26, weight: .semibold)
@@ -19,7 +19,7 @@ private enum SettingsStyle {
     static let fieldLabel = Font.system(size: 12, weight: .medium)
     static let body = Font.system(size: 12)
     static let caption = Font.system(size: 11)
-    static let metadata = Font.system(size: 10)
+    static let metadata = Font.system(size: 11)
 }
 
 private enum SettingsCategory: String, CaseIterable, Identifiable {
@@ -45,8 +45,10 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
 }
 
 private struct SettingsGroup: ViewModifier {
+    var horizontal: CGFloat = 18
+    var vertical: CGFloat = 16
     func body(content: Content) -> some View {
-        content.frame(maxWidth: .infinity, alignment: .leading).padding(18)
+        content.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, horizontal).padding(.vertical, vertical)
             .background(.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Graphite.line, lineWidth: 1))
     }
@@ -84,7 +86,7 @@ struct MonitoringSettingsView: View {
     @State private var message = ""
     @State private var draftError: String?
     @State private var draftSaved = false
-    @State private var applicationsExpanded = false
+    @State private var applicationsExpanded = true
     @State private var previewNode = ""
     @State private var previewFeedback: String?
     @State private var category: SettingsCategory = .reminders
@@ -116,15 +118,21 @@ struct MonitoringSettingsView: View {
             HStack(spacing: 0) {
                 settingsSidebar.frame(width: compact ? 168 : 194)
                 Rectangle().fill(Graphite.line.opacity(0.6)).frame(width: 1)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: SettingsStyle.sectionGap) {
-                        Text(category.pageTitle).font(SettingsStyle.title).foregroundStyle(Graphite.ink)
-                        categoryContent
-                        if category == .reminders { saveFooter }
-                    }.frame(maxWidth: 760, alignment: .leading)
-                        .padding(.horizontal, compact ? 28 : 40).padding(.top, 32).padding(.bottom, 26)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                }.scrollIndicators(.automatic).id(category)
+                VStack(spacing: 0) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: SettingsStyle.sectionGap) {
+                            settingsHeading
+                            categoryContent(compact: compact)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, compact ? 28 : 40).padding(.top, compact ? 26 : 28).padding(.bottom, 26)
+                    }.scrollIndicators(.automatic).id(category)
+                    if category == .reminders {
+                        saveFooter.padding(.horizontal, compact ? 28 : 40).padding(.vertical, 12)
+                            .frame(minHeight: 66)
+                            .background(Color(red: 0.188, green: 0.196, blue: 0.212).opacity(0.94))
+                            .overlay(alignment: .top) { Rectangle().fill(Graphite.line).frame(height: 1) }
+                    }
+                }
             }
         }
         .font(SettingsStyle.body).tint(Graphite.accent)
@@ -165,10 +173,23 @@ struct MonitoringSettingsView: View {
             .frame(maxHeight: .infinity, alignment: .topLeading).background(.black.opacity(0.12))
     }
 
-    @ViewBuilder private var categoryContent: some View {
+    private var settingsHeading: some View {
+        HStack(alignment: .center, spacing: 20) {
+            Text(category.pageTitle).font(SettingsStyle.title).foregroundStyle(Graphite.ink)
+            Spacer(minLength: 0)
+            if category == .reminders {
+                HStack(spacing: 12) {
+                    Text("用时提醒").font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
+                    Toggle("开启用时提醒", isOn: binding(\.notificationsEnabled)).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+            }
+        }.frame(minHeight: 36)
+    }
+
+    @ViewBuilder private func categoryContent(compact: Bool) -> some View {
         switch category {
         case .reminders: reminderPage
-        case .scope: scopeSettings
+        case .scope: scopeSettings(compact: compact)
         case .permissions: permissionsSettings
         case .startup: startupSettings
         }
@@ -176,14 +197,9 @@ struct MonitoringSettingsView: View {
 
     private var reminderPage: some View {
         VStack(alignment: .leading, spacing: SettingsStyle.sectionGap) {
-            HStack(spacing: 13) {
-                Text("用时提醒").font(SettingsStyle.fieldLabel)
-                Spacer(minLength: 12)
-                Toggle("开启用时提醒", isOn: binding(\.notificationsEnabled)).labelsHidden().toggleStyle(.switch).controlSize(.small)
-            }.modifier(SettingsGroup())
-            VStack(alignment: .leading, spacing: 17) {
+            VStack(alignment: .leading, spacing: 15) {
                 HStack(alignment: .center, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Text("每日限额").font(SettingsStyle.fieldLabel)
                         hint("所选应用与网站合计")
                     }
@@ -193,8 +209,12 @@ struct MonitoringSettingsView: View {
                 stateRangeSettings
             }.modifier(SettingsGroup())
             VStack(alignment: .leading, spacing: 10) {
-                fieldHeading("提醒时机")
-                reminderSettings.modifier(SettingsGroup())
+                HStack(spacing: 16) {
+                    Text("提醒时机").font(SettingsStyle.sectionTitle)
+                    Spacer(minLength: 0)
+                    reminderModePicker
+                }
+                reminderSettings.modifier(SettingsGroup(horizontal: 14, vertical: 12))
             }
             messageSettings
             VStack(alignment: .leading, spacing: 14) {
@@ -236,71 +256,71 @@ struct MonitoringSettingsView: View {
     }
 
     private var saveFooter: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if let draftError {
-                Text(draftError).font(SettingsStyle.caption).foregroundStyle(Graphite.warning).fixedSize(horizontal: false, vertical: true)
-            }
-            Divider().overlay(Graphite.line)
-            HStack(spacing: 12) {
-                if draftSaved {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                if let draftError {
+                    Text(draftError).font(SettingsStyle.caption).foregroundStyle(Graphite.warning).fixedSize(horizontal: false, vertical: true)
+                } else if draftSaved {
                     Label("已保存", systemImage: "checkmark")
-                        .font(SettingsStyle.metadata).foregroundStyle(Graphite.muted)
+                        .font(SettingsStyle.metadata).foregroundStyle(Graphite.safe)
+                } else {
+                    Text("节点和文案修改后需要保存").font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
                 }
-                Spacer(minLength: 12)
-                Button(action: saveReminderDraft) {
-                    HStack(spacing: 8) { Text("保存设置"); Image(systemName: "checkmark").font(.system(size: 10)) }
-                }.buttonStyle(SettingsButtonStyle(primary: true))
-            }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: saveReminderDraft) {
+                HStack(spacing: 8) { Text("保存设置"); Image(systemName: "checkmark").font(.system(size: 10)) }
+            }.buttonStyle(SettingsButtonStyle(primary: true))
         }
     }
 
 
-    private var scopeSettings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            fieldHeading("计入每日限额", detail: "\(monitor.preferences.selectedApps.count) 个应用 · \(monitor.preferences.websites.filter(\.enabled).count) 个网站")
-            hint("选中项目共用每日限额；取消勾选仍会记录用时。")
-            VStack(alignment: .leading, spacing: 0) {
-                Button { applicationsExpanded.toggle() } label: {
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 5) {
+    private func scopeSettings(compact: Bool) -> some View {
+        let applications = monitor.availableApplications.filter { BrowserReader.supported[$0.bundleID] == nil }
+        let browsers = monitor.availableApplications.filter { BrowserReader.supported[$0.bundleID] != nil }
+        return VStack(alignment: .leading, spacing: SettingsStyle.sectionGap) {
+            VStack(alignment: .leading, spacing: 5) {
+                fieldHeading("计入每日限额", detail: "\(monitor.preferences.selectedApps.count) 个应用 · \(monitor.preferences.websites.filter(\.enabled).count) 个网站")
+                hint("选中项目共用每日限额；取消勾选仍会记录用时。")
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    Button { applicationsExpanded.toggle() } label: {
+                        HStack(spacing: 7) {
                             Text("应用").foregroundStyle(Graphite.ink).font(SettingsStyle.fieldLabel)
-                            Text(selectedAppNames).font(SettingsStyle.caption).foregroundStyle(Graphite.muted).lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: applicationsExpanded ? "chevron.up" : "chevron.down").font(.system(size: 9))
-                    }.padding(12).contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityLabel("选择计入每日限额的应用").accessibilityValue(applicationsExpanded ? "已展开" : "已收起")
-                if applicationsExpanded {
+                            Image(systemName: applicationsExpanded ? "chevron.up" : "chevron.down").font(.system(size: 9))
+                        }.contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel("选择计入每日限额的应用").accessibilityValue(applicationsExpanded ? "已展开" : "已收起")
+                    Spacer(minLength: 0)
                     HStack(spacing: 12) {
                         Button("添加应用…", action: addApplications)
-                        Spacer()
                         Button("全选") { var value = monitor.preferences; value.selectedApps.formUnion(monitor.availableApplications.map(\.bundleID)); monitor.updatePreferences(value) }
                         Button("清空") { var value = monitor.preferences; value.selectedApps = []; monitor.updatePreferences(value) }
-                    }.buttonStyle(.plain).font(SettingsStyle.caption).foregroundStyle(Graphite.muted).padding(.horizontal, 12).padding(.bottom, 12)
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-                        ForEach(monitor.availableApplications, id: \.bundleID) { app in
-                            VStack(alignment: .leading, spacing: 6) {
-                                Toggle(isOn: Binding(get: { monitor.preferences.selectedApps.contains(app.bundleID) }, set: { selected in
-                                    var value = monitor.preferences
-                                    if selected { value.selectedApps.insert(app.bundleID) } else { value.selectedApps.remove(app.bundleID) }
-                                    monitor.updatePreferences(value)
-                                })) {
-                                    HStack(spacing: 6) {
-                                        AppIcon(bundleID: app.bundleID).frame(width: 22, height: 22)
-                                        Text(app.name).font(SettingsStyle.caption).lineLimit(2)
-                                    }
-                                }.toggleStyle(.checkbox).controlSize(.small)
-                                if BrowserReader.supported[app.bundleID] != nil {
+                    }.buttonStyle(.plain).font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
+                }
+                if applicationsExpanded {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12, alignment: .leading), count: 3), alignment: .leading, spacing: 0) {
+                        ForEach(applications, id: \.bundleID) { app in
+                            applicationSelection(app).frame(minHeight: 39, alignment: .leading)
+                        }
+                    }
+                    if !browsers.isEmpty {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .topLeading), count: compact ? 1 : 2), alignment: .leading, spacing: 14) {
+                            ForEach(browsers, id: \.bundleID) { app in
+                                VStack(alignment: .leading, spacing: 7) {
+                                    applicationSelection(app)
                                     Text("勾选后统计整个浏览器用时；只统计添加的网站时，请勿勾选。")
                                         .font(SettingsStyle.metadata).foregroundStyle(Graphite.muted)
-                                        .lineSpacing(2).fixedSize(horizontal: false, vertical: true)
-                                        .padding(.leading, 20)
-                                }
-                            }.padding(9).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).modifier(SettingsOutline(filled: false))
+                                        .lineSpacing(2).fixedSize(horizontal: false, vertical: true).padding(.leading, 22)
+                                }.frame(maxWidth: .infinity, alignment: .topLeading).padding(.top, 13)
+                                    .overlay(alignment: .top) { Rectangle().fill(Graphite.line).frame(height: 1) }
+                            }
                         }
-                    }.padding(.horizontal, 10).padding(.bottom, 10)
+                    }
+                } else {
+                    Text(selectedAppNames).font(SettingsStyle.caption).foregroundStyle(Graphite.muted).fixedSize(horizontal: false, vertical: true)
                 }
-            }.modifier(SettingsOutline(filled: false))
+            }
+            Divider().overlay(Graphite.line)
             VStack(alignment: .leading, spacing: 8) {
                 fieldHeading("网站", detail: "包含子域名", prominent: false)
                 if monitor.preferences.websites.isEmpty { hint("还没有添加网站") }
@@ -310,7 +330,7 @@ struct MonitoringSettingsView: View {
                             var value = monitor.preferences
                             if let index = value.websites.firstIndex(where: { $0.domain == site.domain }) { value.websites[index].enabled = enabled }
                             monitor.updatePreferences(value)
-                        })).toggleStyle(.checkbox).controlSize(.small).font(.system(size: 11, design: .monospaced))
+                        })).toggleStyle(.checkbox).controlSize(.small).font(SettingsStyle.body)
                         Spacer()
                         Button {
                             var value = monitor.preferences
@@ -318,7 +338,8 @@ struct MonitoringSettingsView: View {
                             monitor.updatePreferences(value)
                         } label: { Image(systemName: "xmark").font(.system(size: 10)) }
                             .buttonStyle(.plain).accessibilityLabel("移除网站 \(site.domain)")
-                    }.foregroundStyle(Graphite.muted).padding(9).modifier(SettingsOutline(filled: false))
+                    }.foregroundStyle(Graphite.muted).frame(minHeight: 35)
+                        .overlay(alignment: .bottom) { Rectangle().fill(Graphite.line.opacity(0.6)).frame(height: 1) }
                 }
                 HStack(spacing: 7) {
                     TextField("域名或完整网址，如 youtube.com", text: $website).textFieldStyle(.plain).font(SettingsStyle.caption)
@@ -335,7 +356,20 @@ struct MonitoringSettingsView: View {
             } label: {
                 Text("这些用时如何计算？").font(SettingsStyle.metadata).foregroundStyle(Graphite.muted)
             }.padding(.top, 5)
-        }.modifier(SettingsGroup())
+        }
+    }
+
+    private func applicationSelection(_ app: AppIdentity) -> some View {
+        Toggle(isOn: Binding(get: { monitor.preferences.selectedApps.contains(app.bundleID) }, set: { selected in
+            var value = monitor.preferences
+            if selected { value.selectedApps.insert(app.bundleID) } else { value.selectedApps.remove(app.bundleID) }
+            monitor.updatePreferences(value)
+        })) {
+            HStack(spacing: 8) {
+                AppIcon(bundleID: app.bundleID).frame(width: 22, height: 22)
+                Text(app.name).font(SettingsStyle.body).lineLimit(2)
+            }
+        }.toggleStyle(.checkbox).controlSize(.small).frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var stateRangeSettings: some View {
@@ -381,30 +415,33 @@ struct MonitoringSettingsView: View {
         }
     }
 
+    private var reminderModePicker: some View {
+        HStack(spacing: 3) {
+            ForEach([("percent", "按限额比例"), ("minutes", "按使用时长")], id: \.0) { kind in
+                Button { binding(\.reminderKind).wrappedValue = kind.0 } label: {
+                    Text(kind.1).font(SettingsStyle.caption)
+                        .foregroundStyle(monitor.preferences.reminderKind == kind.0 ? Graphite.ink : Graphite.muted)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(monitor.preferences.reminderKind == kind.0 ? .white.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                    .accessibilityAddTraits(monitor.preferences.reminderKind == kind.0 ? .isSelected : [])
+            }
+        }.padding(3).background(.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 7))
+    }
+
     private var reminderSettings: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(spacing: 3) {
-                ForEach([("percent", "按限额比例"), ("minutes", "按使用时长")], id: \.0) { kind in
-                    Button { binding(\.reminderKind).wrappedValue = kind.0 } label: {
-                        Text(kind.1).font(SettingsStyle.caption)
-                            .foregroundStyle(monitor.preferences.reminderKind == kind.0 ? Graphite.ink : Graphite.muted)
-                            .padding(.horizontal, 14).padding(.vertical, 7)
-                            .background(monitor.preferences.reminderKind == kind.0 ? .white.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                            .contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                        .accessibilityAddTraits(monitor.preferences.reminderKind == kind.0 ? .isSelected : [])
-                }
-            }.padding(3).background(.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 7))
+        VStack(alignment: .leading, spacing: 9) {
             if activeNodes.isEmpty { hint("还没有提醒节点，添加一个开始设置。") }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 3), spacing: 9) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
                 ForEach(activeNodeBinding) { $node in
                     HStack(spacing: 6) {
-                        TextField("节点", text: $node.value).textFieldStyle(.plain).font(.system(size: 18)).monospacedDigit()
+                        TextField("节点", text: $node.value).textFieldStyle(.plain).font(.system(size: 17)).monospacedDigit()
                             .accessibilityLabel("提醒节点")
                         Text(isPercent ? "%" : "分钟").font(SettingsStyle.metadata).foregroundStyle(Graphite.muted).fixedSize()
                         Button { removeNode(node.id) } label: { Image(systemName: "xmark").font(.system(size: 9)) }
                             .buttonStyle(.plain).foregroundStyle(Graphite.muted).accessibilityLabel("移除提醒节点 \(node.value)")
-                    }.padding(.horizontal, 11).frame(height: 42).modifier(SettingsOutline(filled: false))
+                    }.padding(.horizontal, 10).frame(height: 36).modifier(SettingsOutline(filled: false))
                 }
             }
             HStack(spacing: 12) {
