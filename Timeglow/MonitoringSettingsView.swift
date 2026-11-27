@@ -41,7 +41,7 @@ private enum SettingsCategory: String, CaseIterable, Identifiable {
         case .startup: return "internaldrive"
         }
     }
-    var pageTitle: String { self == .reminders ? "提醒设置" : title }
+    var pageTitle: String { title }
 }
 
 private struct SettingsGroup: ViewModifier {
@@ -79,6 +79,25 @@ private struct SettingsButtonStyle: ButtonStyle {
 struct MonitoringSettingsView: View {
     let monitor: MonitoringController
     @ObservedObject var permissions: PermissionServices
+    @ObservedObject var navigation: WorkspaceNavigation
+    @State private var initialized = false
+    @State private var draftKind = "percent"
+    @State private var templatesVisible = false
+    @State private var oldMessage: String?
+    @State private var templateText: String?
+    @State private var previousApps: Set<String>?
+    @State private var bulk: Bool?
+    @State private var removedSite: WebsiteRule?
+    @State private var scopeFeedback: String?
+    @State private var errorField: Field?
+    @State private var saving = false
+    private enum Field: Hashable { case node(UUID), message, addNode }
+    @FocusState private var focused: Field?
+    private var isDirty: Bool {
+        percentNodes.map(\.value) != monitor.preferences.percentThresholds.map(String.init) ||
+        minuteNodes.map(\.value) != monitor.preferences.minuteThresholds.map(String.init) ||
+        message != monitor.preferences.message || draftKind != monitor.preferences.reminderKind
+    }
     @State private var website = ""
     @State private var websiteError: String?
     @State private var percentNodes: [ReminderNodeDraft] = []
@@ -93,7 +112,7 @@ struct MonitoringSettingsView: View {
     @State private var stateRangesExpanded = false
     @State private var previewExpanded = false
 
-    private var isPercent: Bool { monitor.preferences.reminderKind == "percent" }
+    private var isPercent: Bool { draftKind == "percent" }
     private var activeNodes: [ReminderNodeDraft] { isPercent ? percentNodes : minuteNodes }
     private var activeNodeBinding: Binding<[ReminderNodeDraft]> { isPercent ? $percentNodes : $minuteNodes }
     private var previewValue: String { activeNodes.contains(where: { $0.value == previewNode }) ? previewNode : activeNodes.first?.value ?? "—" }
@@ -114,9 +133,9 @@ struct MonitoringSettingsView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let compact = geometry.size.width < 950
+            let compact = geometry.size.width <= 900
             HStack(spacing: 0) {
-                settingsSidebar.frame(width: compact ? 168 : 194)
+                settingsSidebar.frame(width: compact ? 161 : 189)
                 Rectangle().fill(Graphite.line.opacity(0.6)).frame(width: 1)
                 VStack(spacing: 0) {
                     ScrollView {
@@ -124,11 +143,11 @@ struct MonitoringSettingsView: View {
                             settingsHeading
                             categoryContent(compact: compact)
                         }.frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, compact ? 28 : 40).padding(.top, compact ? 26 : 28).padding(.bottom, 26)
+                            .padding(.horizontal, compact ? 25 : 38).padding(.top, compact ? 23 : 27).padding(.bottom, 26)
                     }.scrollIndicators(.automatic).id(category)
                     if category == .reminders {
-                        saveFooter.padding(.horizontal, compact ? 28 : 40).padding(.vertical, 12)
-                            .frame(minHeight: 66)
+                        saveFooter.padding(.horizontal, compact ? 25 : 38).padding(.vertical, 8)
+                            .frame(minHeight: 60)
                             .background(Color(red: 0.188, green: 0.196, blue: 0.212).opacity(0.94))
                             .overlay(alignment: .top) { Rectangle().fill(Graphite.line).frame(height: 1) }
                     }
@@ -138,14 +157,33 @@ struct MonitoringSettingsView: View {
         .font(SettingsStyle.body).tint(Graphite.accent)
         .buttonStyle(SettingsButtonStyle())
         .onAppear {
+            guard !initialized else { return }
+            initialized = true
+            draftKind = monitor.preferences.reminderKind
+            if navigation.scopeRequest > 0 { category = .scope }
             percentNodes = monitor.preferences.percentThresholds.map { .init(value: String($0)) }
             minuteNodes = monitor.preferences.minuteThresholds.map { .init(value: String($0)) }
             message = monitor.preferences.message
             Task { await permissions.refresh() }
         }
-        .onChange(of: percentNodes) { _, _ in draftSaved = false }
-        .onChange(of: minuteNodes) { _, _ in draftSaved = false }
-        .onChange(of: message) { _, _ in draftSaved = false }
+        .onChange(of: navigation.scopeRequest) { category = .scope }
+        .onChange(of: navigation.section) { if navigation.section == "settings" { Task { await permissions.refresh() } } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if navigation.section == "settings" { Task { await permissions.refresh() } }
+        }
+        .onChange(of: percentNodes) { clearDraftFeedback() }
+        .onChange(of: minuteNodes) { clearDraftFeedback() }
+        .onChange(of: draftKind) { clearDraftFeedback() }
+        .onChange(of: message) {
+            clearDraftFeedback()
+            if message != templateText { oldMessage = nil }
+        }
+        .onChange(of: website) { websiteError = nil }
+        .confirmationDialog(bulk == true ? "将全部应用加入每日限额？" : "清空已选的应用？", isPresented: Binding(get: { bulk != nil }, set: { if !$0 { bulk = nil } })) {
+            Button(bulk == true ? "全部加入" : "清空应用") { if let choice = bulk { applyBulk(choice) } }
+            Button("取消", role: .cancel) {}
+        } message: { Text(bulk == true ? "包括整个浏览器，其中的所有网站都会计入。" : "已有网站规则将继续生效。") }
+
     }
 
     private var settingsSidebar: some View {
@@ -169,7 +207,7 @@ struct MonitoringSettingsView: View {
                 }
             }
             Spacer(minLength: 30)
-        }.padding(.horizontal, 14).padding(.top, 30).padding(.bottom, 25)
+        }.padding(.horizontal, 13).padding(.top, 25).padding(.bottom, 25)
             .frame(maxHeight: .infinity, alignment: .topLeading).background(.black.opacity(0.12))
     }
 
@@ -180,7 +218,7 @@ struct MonitoringSettingsView: View {
             if category == .reminders {
                 HStack(spacing: 12) {
                     Text("用时提醒").font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
-                    Toggle("开启用时提醒", isOn: binding(\.notificationsEnabled)).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    Toggle("开启用时提醒", isOn: binding(\.notificationsEnabled)).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(.blue)
                 }
             }
         }.frame(minHeight: 36)
@@ -188,7 +226,7 @@ struct MonitoringSettingsView: View {
 
     @ViewBuilder private func categoryContent(compact: Bool) -> some View {
         switch category {
-        case .reminders: reminderPage
+        case .reminders: reminderPage.disabled(saving)
         case .scope: scopeSettings(compact: compact)
         case .permissions: permissionsSettings
         case .startup: startupSettings
@@ -197,6 +235,10 @@ struct MonitoringSettingsView: View {
 
     private var reminderPage: some View {
         VStack(alignment: .leading, spacing: SettingsStyle.sectionGap) {
+            if let error = permissions.notificationError { hint(error) }
+            if monitor.preferences.notificationsEnabled && !canNotify {
+                HStack { Label(notificationDescription, systemImage: "bell"); Spacer(); notificationAction }.font(SettingsStyle.caption)
+            }
             VStack(alignment: .leading, spacing: 15) {
                 HStack(alignment: .center, spacing: 20) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -264,19 +306,25 @@ struct MonitoringSettingsView: View {
                     Label("已保存", systemImage: "checkmark")
                         .font(SettingsStyle.metadata).foregroundStyle(Graphite.safe)
                 } else {
-                    Text("节点和文案修改后需要保存").font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
+                    Text(isDirty ? "有未保存的提醒设置" : "没有待保存的更改").font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
             Button(action: saveReminderDraft) {
-                HStack(spacing: 8) { Text("保存设置"); Image(systemName: "checkmark").font(.system(size: 10)) }
-            }.buttonStyle(SettingsButtonStyle(primary: true))
+                Text(saving ? "正在保存…" : "保存设置")
+            }.buttonStyle(SettingsButtonStyle(primary: true)).disabled(!isDirty || saving).opacity(isDirty && !saving ? 1 : 0.55)
         }
     }
 
 
     private func scopeSettings(compact: Bool) -> some View {
-        let applications = monitor.availableApplications.filter { BrowserReader.supported[$0.bundleID] == nil }
-        let browsers = monitor.availableApplications.filter { BrowserReader.supported[$0.bundleID] != nil }
+        let known = Set(monitor.availableApplications.map(\.bundleID))
+        let missing = monitor.preferences.selectedApps.subtracting(known).sorted().map { id in
+            let name = BrowserReader.supported[id] ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: id)?.deletingPathExtension().lastPathComponent ?? id
+            return AppIdentity(bundleID: id, name: name)
+        }
+        let candidates = monitor.availableApplications + missing
+        let applications = candidates.filter { BrowserReader.supported[$0.bundleID] == nil }
+        let browsers = candidates.filter { BrowserReader.supported[$0.bundleID] != nil }
         return VStack(alignment: .leading, spacing: SettingsStyle.sectionGap) {
             VStack(alignment: .leading, spacing: 5) {
                 fieldHeading("计入每日限额", detail: "\(monitor.preferences.selectedApps.count) 个应用 · \(monitor.preferences.websites.filter(\.enabled).count) 个网站")
@@ -293,8 +341,8 @@ struct MonitoringSettingsView: View {
                     Spacer(minLength: 0)
                     HStack(spacing: 12) {
                         Button("添加应用…", action: addApplications)
-                        Button("全选") { var value = monitor.preferences; value.selectedApps.formUnion(monitor.availableApplications.map(\.bundleID)); monitor.updatePreferences(value) }
-                        Button("清空") { var value = monitor.preferences; value.selectedApps = []; monitor.updatePreferences(value) }
+                        Button("全选") { bulk = true }
+                        Button("清空") { bulk = false }
                     }.buttonStyle(.plain).font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
                 }
                 if applicationsExpanded {
@@ -304,21 +352,18 @@ struct MonitoringSettingsView: View {
                         }
                     }
                     if !browsers.isEmpty {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .topLeading), count: compact ? 1 : 2), alignment: .leading, spacing: 14) {
-                            ForEach(browsers, id: \.bundleID) { app in
-                                VStack(alignment: .leading, spacing: 7) {
-                                    applicationSelection(app)
-                                    Text("勾选后统计整个浏览器用时；只统计添加的网站时，请勿勾选。")
-                                        .font(SettingsStyle.metadata).foregroundStyle(Graphite.muted)
-                                        .lineSpacing(2).fixedSize(horizontal: false, vertical: true).padding(.leading, 22)
-                                }.frame(maxWidth: .infinity, alignment: .topLeading).padding(.top, 13)
-                                    .overlay(alignment: .top) { Rectangle().fill(Graphite.line).frame(height: 1) }
-                            }
+                        Divider()
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: compact ? 1 : 2), alignment: .leading, spacing: 8) {
+                            ForEach(browsers, id: \.bundleID) { applicationSelection($0) }
                         }
+                        hint("勾选浏览器会计入其中所有网站。只想计入指定网站时，请在下方添加域名。")
                     }
                 } else {
                     Text(selectedAppNames).font(SettingsStyle.caption).foregroundStyle(Graphite.muted).fixedSize(horizontal: false, vertical: true)
                 }
+            }
+            if let scopeFeedback {
+                HStack { Text(scopeFeedback); if previousApps != nil || removedSite != nil { Button("撤销", action: undoScope) } }.font(SettingsStyle.caption)
             }
             Divider().overlay(Graphite.line)
             VStack(alignment: .leading, spacing: 8) {
@@ -328,12 +373,14 @@ struct MonitoringSettingsView: View {
                     HStack {
                         Toggle(site.domain, isOn: Binding(get: { monitor.preferences.websites.first(where: { $0.domain == site.domain })?.enabled ?? false }, set: { enabled in
                             var value = monitor.preferences
+                            scopeFeedback = nil; previousApps = nil; removedSite = nil
                             if let index = value.websites.firstIndex(where: { $0.domain == site.domain }) { value.websites[index].enabled = enabled }
                             monitor.updatePreferences(value)
-                        })).toggleStyle(.checkbox).controlSize(.small).font(SettingsStyle.body)
+                        })).toggleStyle(.checkbox).controlSize(.small).font(SettingsStyle.body).foregroundStyle(site.enabled ? Graphite.ink : Graphite.muted)
                         Spacer()
                         Button {
                             var value = monitor.preferences
+                            removedSite = site; previousApps = nil; scopeFeedback = "已移除 " + site.domain
                             value.websites.removeAll { $0.domain == site.domain }
                             monitor.updatePreferences(value)
                         } label: { Image(systemName: "xmark").font(.system(size: 10)) }
@@ -350,7 +397,7 @@ struct MonitoringSettingsView: View {
             }.padding(.top, 5)
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 9) {
-                    hint("选中的应用和网站合并计算每天的使用时长，不是每项各算一份。选中整个浏览器时，其中所有网站都会计入合计，即使未单独选中网站。重复匹配的用时只算一次。")
+                    hint("应用与网站共用每日限额。同一时段只计一次。")
                     hint("支持 HTTP / HTTPS 网站。完整链接会按域名保存，页面路径与参数不参与匹配。例：bilibili.com、youtube.com、github.com。")
                 }.padding(.top, 10)
             } label: {
@@ -362,12 +409,18 @@ struct MonitoringSettingsView: View {
     private func applicationSelection(_ app: AppIdentity) -> some View {
         Toggle(isOn: Binding(get: { monitor.preferences.selectedApps.contains(app.bundleID) }, set: { selected in
             var value = monitor.preferences
+            previousApps = nil; removedSite = nil; scopeFeedback = nil
             if selected { value.selectedApps.insert(app.bundleID) } else { value.selectedApps.remove(app.bundleID) }
             monitor.updatePreferences(value)
         })) {
             HStack(spacing: 8) {
                 AppIcon(bundleID: app.bundleID).frame(width: 22, height: 22)
-                Text(app.name).font(SettingsStyle.body).lineLimit(2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(app.name).font(SettingsStyle.body).lineLimit(1)
+                    if monitor.availableApplications.filter({ $0.name == app.name }).count > 1 {
+                        Text(app.bundleID).font(SettingsStyle.caption).foregroundStyle(Graphite.muted).lineLimit(1).truncationMode(.middle).help(app.bundleID)
+                    }
+                }
             }
         }.toggleStyle(.checkbox).controlSize(.small).frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -376,7 +429,7 @@ struct MonitoringSettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             let warning = monitor.preferences.warningPercent
             let spent = monitor.preferences.spentPercent
-            let maximum = Double(max(120, spent * 6 / 5))
+            let maximum = Double(max(100, spent + 2))
             GeometryReader { geometry in
                 HStack(spacing: 3) {
                     Graphite.safe.frame(width: max(0, (geometry.size.width - 6) * Double(warning) / maximum))
@@ -385,11 +438,11 @@ struct MonitoringSettingsView: View {
                 }.clipShape(Capsule())
             }.frame(height: 4)
             HStack(spacing: 12) {
-                stateLabel("充足  0–\(warning - 1)%", color: Graphite.safe)
+                stateLabel("充足", color: Graphite.safe)
                 Spacer(minLength: 0)
-                stateLabel("留意  \(warning)–\(spent - 1)%", color: Graphite.warning)
+                stateLabel("留意 \(warning)% 起", color: Graphite.warning)
                 Spacer(minLength: 0)
-                stateLabel("用尽  \(spent)% 起", color: Graphite.spent)
+                stateLabel("警戒  \(spent)% 起", color: Graphite.spent)
             }
             DisclosureGroup(isExpanded: $stateRangesExpanded) {
                 VStack(alignment: .leading, spacing: 13) {
@@ -399,8 +452,8 @@ struct MonitoringSettingsView: View {
                             numberField("进入留意的百分比", value: binding(\.warningPercent), unit: "%", range: 1...(spent - 1))
                         }
                         VStack(alignment: .leading, spacing: 8) {
-                            stateLabel("进入「用尽」", color: Graphite.spent)
-                            numberField("进入用尽的百分比", value: binding(\.spentPercent), unit: "%", range: (warning + 1)...300)
+                            stateLabel("进入「警戒」", color: Graphite.spent)
+                            numberField("进入警戒的百分比", value: binding(\.spentPercent), unit: "%", range: (warning + 1)...300)
                         }
                     }
                     hint("状态范围控制书签、小球与进度条的颜色，通知按提醒节点触发。")
@@ -418,14 +471,14 @@ struct MonitoringSettingsView: View {
     private var reminderModePicker: some View {
         HStack(spacing: 3) {
             ForEach([("percent", "按限额比例"), ("minutes", "按使用时长")], id: \.0) { kind in
-                Button { binding(\.reminderKind).wrappedValue = kind.0 } label: {
+                Button { draftKind = kind.0 } label: {
                     Text(kind.1).font(SettingsStyle.caption)
-                        .foregroundStyle(monitor.preferences.reminderKind == kind.0 ? Graphite.ink : Graphite.muted)
+                        .foregroundStyle(draftKind == kind.0 ? Graphite.ink : Graphite.muted)
                         .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(monitor.preferences.reminderKind == kind.0 ? .white.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                        .background(draftKind == kind.0 ? .white.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 5))
                         .contentShape(Rectangle())
                 }.buttonStyle(.plain)
-                    .accessibilityAddTraits(monitor.preferences.reminderKind == kind.0 ? .isSelected : [])
+                    .accessibilityAddTraits(draftKind == kind.0 ? .isSelected : [])
             }
         }.padding(3).background(.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 7))
     }
@@ -437,15 +490,19 @@ struct MonitoringSettingsView: View {
                 ForEach(activeNodeBinding) { $node in
                     HStack(spacing: 6) {
                         TextField("节点", text: $node.value).textFieldStyle(.plain).font(.system(size: 17)).monospacedDigit()
-                            .accessibilityLabel("提醒节点")
+                            .frame(width: max(22, CGFloat(node.value.count) * 11 + 3))
+                            .focused($focused, equals: .node(node.id)).accessibilityLabel("提醒节点")
                         Text(isPercent ? "%" : "分钟").font(SettingsStyle.metadata).foregroundStyle(Graphite.muted).fixedSize()
+                        Spacer(minLength: 0)
                         Button { removeNode(node.id) } label: { Image(systemName: "xmark").font(.system(size: 9)) }
                             .buttonStyle(.plain).foregroundStyle(Graphite.muted).accessibilityLabel("移除提醒节点 \(node.value)")
                     }.padding(.horizontal, 10).frame(height: 36).modifier(SettingsOutline(filled: false))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(errorField == .node(node.id) ? Graphite.warning : .clear))
+                        .id(node.id)
                 }
             }
             HStack(spacing: 12) {
-                Button(action: addNode) { Label("添加节点", systemImage: "plus") }
+                Button(action: addNode) { Label("添加节点", systemImage: "plus") }.focused($focused, equals: .addNode)
                     .buttonStyle(.plain).font(SettingsStyle.caption).foregroundStyle(Graphite.accent)
                 Spacer(minLength: 0)
                 Text("每个节点每天提醒一次").font(SettingsStyle.metadata).foregroundStyle(Graphite.muted)
@@ -462,10 +519,15 @@ struct MonitoringSettingsView: View {
                 .overlay(alignment: .bottomTrailing) {
                     Text("\(message.count) / 80").font(SettingsStyle.metadata).foregroundStyle(message.count > 80 ? Graphite.warning : Graphite.muted)
                         .padding(.trailing, 11).padding(.bottom, 7).allowsHitTesting(false)
-                }.accessibilityLabel("写给自己的一句话")
-            HStack(spacing: 9) {
-                Button("温和一点") { message = "先停一下，把时间留给今天真正想做的事。" }
-                Button("直接一点") { message = "现在关掉它，去完成那件重要的事。" }
+                }.accessibilityLabel("写给自己的一句话").focused($focused, equals: .message)
+            HStack(spacing: 12) {
+                Button { templatesVisible.toggle() } label: { Label("选择示例", systemImage: "plus") }
+                if let oldMessage { Button("撤销替换") { message = oldMessage; self.oldMessage = nil; templateText = nil } }
+            }.buttonStyle(.plain).foregroundStyle(Graphite.muted)
+            if templatesVisible {
+                ForEach(["先停一下，把时间留给今天真正想做的事。", "现在关掉它，去完成那件重要的事。"], id: \.self) { text in
+                    Button(text) { oldMessage = message; templateText = text; message = text; templatesVisible = false }
+                }
             }
         }
     }
@@ -496,10 +558,10 @@ struct MonitoringSettingsView: View {
                 .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Graphite.line, lineWidth: 1))
             HStack(spacing: 14) {
-                Button("演示此节点提醒") {
-                    if let context = reminderPreviewContext() { permissions.previewReminder?(context) }
-                }.disabled(activeNodes.isEmpty)
-                Button("发送系统测试通知 ↗") { Task { await sendTestNotification() } }.disabled(activeNodes.isEmpty)
+                ReminderDemoButton(enabled: reminderPreviewContext() != nil) { restore in
+                    if let context = reminderPreviewContext() { permissions.previewReminder?(context, restore) }
+                }.fixedSize()
+                Button("测试系统通知") { Task { await sendTestNotification() } }.disabled(activeNodes.isEmpty)
                     .buttonStyle(.plain).font(SettingsStyle.caption).foregroundStyle(Graphite.muted)
             }
             if let previewFeedback {
@@ -516,25 +578,27 @@ struct MonitoringSettingsView: View {
                 fieldHeading("网页统计与授权")
                 VStack(alignment: .leading, spacing: 16) {
                     ForEach(BrowserReader.supported.keys.sorted(), id: \.self) { id in
-                        HStack(spacing: 10) {
-                            Toggle(isOn: Binding(get: { monitor.preferences.enabledBrowsers.contains(id) }, set: { enabled in
-                                var value = monitor.preferences
-                                if enabled { value.enabledBrowsers.insert(id) } else { value.enabledBrowsers.remove(id) }
-                                monitor.updatePreferences(value)
-                            })) {
-                                HStack(spacing: 9) {
-                                    AppIcon(bundleID: id).frame(width: 25, height: 25)
-                                    Text(BrowserReader.supported[id]!).font(SettingsStyle.fieldLabel)
-                                }
-                            }.toggleStyle(.checkbox).controlSize(.small)
+                        let allowed = monitor.browserPermissions[id] ?? .notRequested
+                        let enabled = monitor.preferences.enabledBrowsers.contains(id)
+                        HStack(spacing: 9) {
+                            AppIcon(bundleID: id).frame(width: 22, height: 22)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(BrowserReader.supported[id]!).font(SettingsStyle.fieldLabel)
+                                hint((enabled ? (allowed == .allowed ? "已开启采集" : "等待授权，尚未采集") : "采集已关闭") + " · " + allowed.label)
+                            }
                             Spacer(minLength: 0)
-                            Text((monitor.browserPermissions[id] ?? .notRequested).label).font(SettingsStyle.metadata).foregroundStyle(Graphite.muted)
-                            Button("授权…") { monitor.requestBrowserPermission(id) }
+                            if allowed == .denied { Button("管理授权 ↗") { openSystemSettings("Privacy_Automation") } }
+                            else if allowed != .allowed { Button("授权…") { monitor.requestBrowserPermission(id) } }
+                            Toggle("记录" + BrowserReader.supported[id]! + "网站用时", isOn: Binding(get: { enabled }, set: { on in
+                                var p = monitor.preferences
+                                if on { p.enabledBrowsers.insert(id) } else { p.enabledBrowsers.remove(id) }
+                                monitor.updatePreferences(p)
+                            })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(.blue)
                         }
                     }
                     Divider().overlay(Graphite.line)
-                    hint("开启后仅在浏览器位于前台时读取当前网站。首次使用请打开对应浏览器，再点击授权；系统可能显示“想要控制浏览器”。")
-                    Button("打开自动化设置 ↗") { openSystemSettings("Privacy_Automation") }
+                    hint("只有采集开启且获得授权后，才会在浏览器位于前台时读取网站。")
+
                 }.modifier(SettingsGroup())
             }
             VStack(alignment: .leading, spacing: 10) {
@@ -548,17 +612,17 @@ struct MonitoringSettingsView: View {
                             Text("10 分钟").tag(600.0); Text("不自动排除闲置").tag(0.0)
                         }.labelsHidden().font(SettingsStyle.caption).frame(width: 150)
                     }
-                    hint("长时间阅读或看视频时可延长闲置阈值。锁屏、屏幕休眠和手动暂停另行停止计时。")
+                    hint(monitor.preferences.idleSeconds > 0 ? "连续 \(Int(monitor.preferences.idleSeconds / 60)) 分钟无输入后，从最后一次输入起扣除这段闲置时间。锁屏和休眠会暂停计时。" : "阅读和观看视频期间继续计时。锁屏和休眠会暂停计时。")
                 }.modifier(SettingsGroup())
             }
             VStack(alignment: .leading, spacing: 10) {
                 fieldHeading("系统通知")
                 VStack(alignment: .leading, spacing: 13) {
-                    hint(notificationDescription)
-                    HStack(spacing: 10) {
-                        Button("允许通知…") { Task { await permissions.requestNotifications() } }
-                        Button("通知设置 ↗") { openSystemSettings("Privacy_Notifications") }
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) { Text("用时提醒的系统权限"); hint(notificationDescription) }
+                        Spacer(); notificationAction
                     }
+                    if let error = permissions.notificationError { hint(error) }
                 }.modifier(SettingsGroup())
             }
         }
@@ -570,14 +634,15 @@ struct MonitoringSettingsView: View {
                 HStack(spacing: 20) {
                     Text("登录 Mac 时自动启动").font(SettingsStyle.fieldLabel)
                     Spacer(minLength: 0)
-                    Toggle("登录 Mac 时自动启动", isOn: Binding(get: { permissions.loginEnabled }, set: { enabled in
+                    if permissions.loginNeedsApproval { Text("待系统批准").foregroundStyle(Graphite.warning) }
+                    else { Text(permissions.loginEnabled ? "已开启" : "已关闭").foregroundStyle(Graphite.muted); Toggle("登录 Mac 时自动启动", isOn: Binding(get: { permissions.loginEnabled }, set: { enabled in
                         Task { await permissions.setLoginEnabled(enabled) }
-                    })).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(.blue) }
                 }
                 if permissions.loginNeedsApproval {
                     Button("在系统设置中允许登录项") { SMAppService.openSystemSettingsLoginItems() }
                 }
-                if let error = permissions.error { Text(error).font(SettingsStyle.caption).foregroundStyle(Graphite.warning) }
+                if let error = permissions.loginError { Text(error).font(SettingsStyle.caption).foregroundStyle(Graphite.warning) }
                 Divider().overlay(Graphite.line)
                 HStack(spacing: 20) {
                     VStack(alignment: .leading, spacing: 5) {
@@ -585,7 +650,7 @@ struct MonitoringSettingsView: View {
                         hint("所有用时记录仅保存在这台 Mac 上")
                     }
                     Spacer(minLength: 0)
-                    Button("查看位置 ↗") { NSWorkspace.shared.activateFileViewerSelecting([monitor.databaseURL]) }
+                    Button("在访达中显示 ↗") { NSWorkspace.shared.activateFileViewerSelecting([monitor.databaseURL]) }
                 }
             }.modifier(SettingsGroup())
             hint("关闭窗口后继续记录，可通过书签或菜单栏查看；退出 Timeglow 后停止记录。")
@@ -617,6 +682,24 @@ struct MonitoringSettingsView: View {
     }
 
 
+    private var canNotify: Bool { permissions.notificationStatus == .authorized || permissions.notificationStatus == .provisional }
+    @ViewBuilder private var notificationAction: some View {
+        if permissions.notificationStatus == .notDetermined {
+            Button("允许通知…") { Task { await permissions.requestNotifications() } }
+        } else { Button("管理通知设置 ↗") { if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") { NSWorkspace.shared.open(url) } } }
+    }
+    private func applyBulk(_ all: Bool) {
+        var p = monitor.preferences
+        previousApps = p.selectedApps; removedSite = nil
+        if all { p.selectedApps.formUnion(monitor.availableApplications.map(\.bundleID)) } else { p.selectedApps = [] }
+        monitor.updatePreferences(p); scopeFeedback = all ? "已加入全部应用。" : "已清空所选应用。"; bulk = nil
+    }
+    private func undoScope() {
+        var p = monitor.preferences
+        if let previousApps { p.selectedApps = previousApps }
+        if let removedSite, !p.websites.contains(where: { $0.domain == removedSite.domain }) { p.websites.append(removedSite) }
+        monitor.updatePreferences(p); previousApps = nil; removedSite = nil; scopeFeedback = "已撤销。"
+    }
     private var notificationDescription: String {
         switch permissions.notificationStatus {
         case .authorized, .provisional: return "系统通知已允许"
@@ -628,10 +711,13 @@ struct MonitoringSettingsView: View {
     private func addNode() {
         let maximum = isPercent ? 300 : 1440
         let step = isPercent ? 10 : 30
-        let used = Set(activeNodes.compactMap { Int($0.value) })
+        let used = Set(activeNodes.compactMap { Int($0.value.trimmingCharacters(in: .whitespaces)) }
+            .filter { (1...maximum).contains($0) })
         let suggested = (used.max() ?? 0) + step
         guard let next = suggested <= maximum ? suggested : (1...maximum).first(where: { !used.contains($0) }) else { return }
-        activeNodeBinding.wrappedValue.append(.init(value: String(next)))
+        let node = ReminderNodeDraft(value: String(next))
+        activeNodeBinding.wrappedValue.append(node)
+        Task { @MainActor in await Task.yield(); focused = .node(node.id) }
     }
 
     private func removeNode(_ id: UUID) { activeNodeBinding.wrappedValue.removeAll { $0.id == id } }
@@ -639,7 +725,10 @@ struct MonitoringSettingsView: View {
     private func addWebsite() {
         guard let domain = DomainRules.normalized(website) else { websiteError = "请输入有效的域名或 http/https 网址。"; return }
         var value = monitor.preferences
+        let already = value.includesWebsite(domain)
         value.addWebsite(domain)
+        scopeFeedback = already ? "已有规则涵盖 " + domain : "已启用 " + domain
+        previousApps = nil; removedSite = nil
         monitor.updatePreferences(value)
         website = ""
         websiteError = nil
@@ -665,26 +754,51 @@ struct MonitoringSettingsView: View {
     }
 
     private func saveReminderDraft() {
-        func values(_ nodes: [ReminderNodeDraft], maximum: Int) -> [Int]? {
-            let values = nodes.compactMap { Int($0.value.trimmingCharacters(in: .whitespaces)) }
-            guard !values.isEmpty, values.count == nodes.count, Set(values).count == values.count, values.allSatisfy({ (1...maximum).contains($0) }) else { return nil }
-            return values.sorted()
+        for (kind, nodes, limit) in [("percent", percentNodes, 300), ("minutes", minuteNodes, 1440)] {
+            var seen = Set<Int>()
+            if nodes.isEmpty { showError("请至少添加一个节点。", kind, .addNode); return }
+            for (i,node) in nodes.enumerated() {
+                let title = (kind == "percent" ? "按限额比例" : "按使用时长") + " · 第 " + String(i+1) + " 个节点"
+                guard let n = Int(node.value.trimmingCharacters(in: .whitespaces)), (1...limit).contains(n) else { showError(title + "须为 1–" + String(limit) + " 的整数。", kind, .node(node.id)); return }
+                guard seen.insert(n).inserted else { showError(title + "与前面的节点重复。", kind, .node(node.id)); return }
+            }
         }
-        guard let percent = values(percentNodes, maximum: 300), let minutes = values(minuteNodes, maximum: 1440), !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, message.count <= 80 else {
-            draftError = "节点不能重复；百分比为 1–300，分钟数为 1–1440，警示语为 1–80 字。"; return
-        }
+        let clean = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, message.count <= 80 else { showError("提醒文案需要 1–80 个字。", draftKind, .message); return }
+        let percent = percentNodes.compactMap { Int($0.value.trimmingCharacters(in: .whitespaces)) }.sorted()
+        let minutes = minuteNodes.compactMap { Int($0.value.trimmingCharacters(in: .whitespaces)) }.sorted()
         var value = monitor.preferences
+        value.reminderKind = draftKind
         value.percentThresholds = percent
         value.minuteThresholds = minutes
         value.message = message.trimmingCharacters(in: .whitespacesAndNewlines)
         draftError = nil
         draftSaved = false
+        saving = true
         monitor.updatePreferences(value) { success in
+            saving = false
+            if success {
+                if percentNodes.map(\.value) != percent.map(String.init) { percentNodes = percent.map { .init(value: String($0)) } }
+                if minuteNodes.map(\.value) != minutes.map(String.init) { minuteNodes = minutes.map { .init(value: String($0)) } }
+                message = clean
+                oldMessage = nil
+            }
             draftSaved = success
             if !success { draftError = monitor.error }
         }
     }
 
+    private func clearDraftFeedback() {
+        if isDirty { draftSaved = false }
+        if focused == errorField || errorField == nil { draftError = nil; errorField = nil }
+    }
+    private func showError(_ reason: String, _ kind: String, _ field: Field) {
+        draftKind = kind
+        Task { @MainActor in
+            await Task.yield()
+            draftError = reason; errorField = field; focused = field
+        }
+    }
     private func reminderPreviewContext() -> ReminderContext? {
         guard let node = Int(previewValue), node > 0 else { return nil }
         let quota = monitor.preferences.quotaMinutes
@@ -709,5 +823,45 @@ struct MonitoringSettingsView: View {
 
     private func openSystemSettings(_ section: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(section)") { NSWorkspace.shared.open(url) }
+    }
+}
+
+/// Capture the editor's real scroll position before presenting the separate panel.
+/// SwiftUI can otherwise give the first text field focus when its NSWindow returns.
+private struct ReminderDemoButton: NSViewRepresentable {
+    var enabled: Bool
+    var present: (@escaping () -> Void) -> Void
+
+    final class Button: NSButton {
+        var present: ((@escaping () -> Void) -> Void)?
+        override var acceptsFirstResponder: Bool { true }
+        @objc func showPreview() {
+            let scroll = enclosingScrollView
+            let offset = scroll?.contentView.bounds.origin
+            window?.makeFirstResponder(self)
+            present? { [weak self, weak scroll] in
+                guard let self, let window = self.window else { return }
+                window.makeFirstResponder(self)
+                if let scroll, let offset {
+                    scroll.contentView.scroll(to: offset)
+                    scroll.reflectScrolledClipView(scroll.contentView)
+                }
+            }
+        }
+    }
+    func makeNSView(context: Context) -> Button {
+        let button = Button()
+        button.title = "演示提醒窗口"
+        button.bezelStyle = .rounded
+        button.controlSize = .regular
+        button.font = .systemFont(ofSize: 12)
+        button.target = button
+        button.action = #selector(Button.showPreview)
+        button.setAccessibilityIdentifier("settings.reminder-demo")
+        return button
+    }
+    func updateNSView(_ button: Button, context: Context) {
+        button.isEnabled = enabled
+        button.present = present
     }
 }

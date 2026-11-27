@@ -29,6 +29,15 @@ struct ReminderContextTests {
         #expect(original.node == 20)
     }
 
+    @Test func minutePreviewsRetainTheirConfiguredUnit() {
+        var original = context(isTest: true)
+        original.kind = .minutes
+        original.node = 30
+        let reading = ReminderReading.make(context: original, currentSeconds: 9000, currentQuotaMinutes: 100, now: now, calendar: calendar)
+        #expect(reading.unit == "分钟")
+        #expect(reading.value == 30)
+    }
+
     @Test func historicalAndTestNotificationsUseTheirOwnSnapshot() {
         for original in [context(day: "2026-11-12"), context(isTest: true)] {
             let reading = ReminderReading.make(context: original, currentSeconds: 9000, currentQuotaMinutes: 100, now: now, calendar: calendar)

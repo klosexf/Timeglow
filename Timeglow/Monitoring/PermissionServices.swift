@@ -8,8 +8,9 @@ final class PermissionServices: ObservableObject {
     @Published private(set) var notificationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var loginEnabled = false
     @Published private(set) var loginNeedsApproval = false
-    @Published var error: String?
-    var previewReminder: ((ReminderContext) -> Void)?
+    @Published var loginError: String?
+    @Published var notificationError: String?
+    var previewReminder: ((ReminderContext, @escaping () -> Void) -> Void)?
 
     func refresh() async {
         let center = UNUserNotificationCenter.current()
@@ -20,18 +21,20 @@ final class PermissionServices: ObservableObject {
     }
 
     func requestNotifications() async {
+        notificationError = nil
         do {
             _ = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
             await refresh()
-        } catch { self.error = error.localizedDescription }
+        } catch { self.notificationError = error.localizedDescription }
     }
 
     func setLoginEnabled(_ enabled: Bool) async {
+        loginError = nil
         do {
             if enabled { try SMAppService.mainApp.register() }
             else { try await SMAppService.mainApp.unregister() }
             await refresh()
-        } catch { self.error = error.localizedDescription }
+        } catch { self.loginError = error.localizedDescription }
     }
 
     func send(identifier: String, title: String, body: String, reminder: ReminderContext? = nil) async throws {

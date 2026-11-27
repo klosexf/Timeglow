@@ -3,7 +3,7 @@ import Foundation
 enum ReportPeriod: String, CaseIterable, Identifiable, Sendable {
     case day, week, all
     var id: String { rawValue }
-    var title: String { self == .day ? "今日" : self == .week ? "每周" : "累计" }
+    var title: String { self == .day ? "日" : self == .week ? "周" : "累计" }
     func interval(anchor: Date, firstRecord: Date?, now: Date = Date(), calendar: Calendar = .current) -> DateInterval {
         let day = calendar.startOfDay(for: anchor)
         if self == .day { return .init(start: day, end: calendar.date(byAdding: .day, value: 1, to: day)!) }
@@ -30,6 +30,7 @@ struct UsageTrendPoint: Identifiable, Sendable {
     var date: Date
     var total: Double
     var scoped: Double
+    var hasRecord: Bool = true
     var id: Date { date }
 }
 
@@ -39,12 +40,20 @@ struct UsageCategory: Identifiable, Sendable {
     var id: String { name }
 }
 
+struct ApplicationTime: Sendable {
+    var name: String
+    var seconds: Double
+    init(_ app: ApplicationUsage) { name = app.name; seconds = app.seconds }
+}
+
 struct UsageReport: Sendable {
     var interval: DateInterval
     var summary: UsageSummary
     var days: [DailyUsage]
     var trend: [UsageTrendPoint]
     var categories: [UsageCategory]
+    var firstRecord: Date? = nil
+    var timesByDay: [Date: [ApplicationTime]] = [:]
     var averageSeconds: Double { summary.totalSeconds / Double(max(1, days.filter(\.hasRecord).count)) }
 
     static func category(bundleID: String, name: String) -> String {

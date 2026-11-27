@@ -12,16 +12,16 @@ enum Graphite {
 
     static func categoryColor(_ category: String) -> Color {
         switch category {
-        case "创作与开发": return accent
+        case "创作与开发": return Color(red: 0.71, green: 0.65, blue: 0.79)
         case "网页浏览": return Color(red: 0.55, green: 0.69, blue: 0.77)
-        case "沟通": return Color(red: 0.81, green: 0.71, blue: 0.59)
-        case "影音": return Color(red: 0.69, green: 0.61, blue: 0.76)
+        case "沟通": return Color(red: 0.61, green: 0.73, blue: 0.66)
+        case "影音": return Color(red: 0.77, green: 0.67, blue: 0.54)
         default: return Color(red: 0.44, green: 0.47, blue: 0.53)
         }
     }
 
     static func state(percent: Double, preferences: MonitoringPreferences) -> (String, Color) {
-        if percent >= Double(preferences.spentPercent) { return ("用尽", spent) }
+        if percent >= Double(preferences.spentPercent) { return ("警戒", spent) }
         if percent >= Double(preferences.warningPercent) { return ("留意", warning) }
         return ("充足", safe)
     }
@@ -42,7 +42,7 @@ struct GraphiteSurface: View {
     var radius: CGFloat = 16
     var body: some View {
         GraphiteGlass()
-            .overlay(Color(red: 0.08, green: 0.085, blue: 0.10).opacity(0.80))
+            .overlay(Color(red: 0.155, green: 0.16, blue: 0.18).opacity(0.94))
             .overlay(LinearGradient(colors: [.white.opacity(0.055), .clear], startPoint: .topLeading, endPoint: .bottomTrailing))
             .clipShape(RoundedRectangle(cornerRadius: radius))
             .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(.white.opacity(0.12), lineWidth: 1))

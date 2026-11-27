@@ -66,7 +66,7 @@ final class BookmarkWindows {
     }
 
     private func makePanel(size: NSSize, title: String) -> NSPanel {
-        let panel = NSPanel(contentRect: .init(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let panel = BookmarkPanel(contentRect: .init(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = title
         panel.level = .floating
         // Keep the bookmark and overview on ordinary desktops, outside full-screen spaces.
@@ -134,11 +134,13 @@ final class BookmarkWindows {
 
     private func positionOverview() {
         let frame = (bookmark.screen ?? NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-        let size = NSSize(width: min(348, frame.width - 72), height: min(610, frame.height - 32))
+        let size = NSSize(width: min(348, frame.width - 72), height: min(570, frame.height - 32))
         let x = side == "left" ? bookmark.frame.maxX + 12 : bookmark.frame.minX - 12 - size.width
         let y = min(frame.maxY - size.height - 8, max(frame.minY + 8, bookmark.frame.midY - size.height / 2))
         overview.setFrame(.init(origin: .init(x: x, y: y), size: size), display: true)
     }
+
+    func showOverview() { if !overviewVisible { toggleOverview() } }
 
     private func toggleOverview() {
         guard !fullScreenActive else { return }
@@ -150,12 +152,16 @@ final class BookmarkWindows {
             }))
             overviewVisible = true
             positionOverview()
-            overview.orderFrontRegardless()
+            overview.makeKeyAndOrderFront(nil)
             monitorOverviewDismissal()
         }
     }
 
     private func monitorOverviewDismissal() {
+        if let keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] e in
+            if e.keyCode == 53 { MainActor.assumeIsolated { self?.hideOverview() }; return nil }
+            return e
+        }) { overviewMouseMonitors.append(keys) }
         let mouseDown: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         if let local = NSEvent.addLocalMonitorForEvents(matching: mouseDown, handler: { [weak self] event in
             MainActor.assumeIsolated {
@@ -189,6 +195,10 @@ final class BookmarkWindows {
     }
 }
 
+private final class BookmarkPanel: NSPanel {
+    override var canBecomeKey: Bool { title == "Timeglow 使用概览" }
+}
+
 private final class BookmarkHandleView: NSView {
     var onClick: (() -> Void)?
     var onDragStart: ((NSPoint) -> Void)?
@@ -213,7 +223,7 @@ private struct LiveBookmarkFace: View {
     let side: String
     var body: some View {
         let percent = monitor.summary.scopedSeconds / Double(monitor.preferences.quotaMinutes * 60) * 100
-        BookmarkFace(percent: percent, preferences: monitor.preferences, side: side)
+        BookmarkFace(percent: percent, preferences: monitor.preferences, side: side, paused: monitor.isPaused, recorded: !monitor.summary.applications.isEmpty, scoped: !monitor.preferences.selectedApps.isEmpty || monitor.preferences.websites.contains(where: \.enabled))
     }
 }
 
@@ -223,64 +233,67 @@ private struct OverviewPanel: View {
     let open: (String) -> Void
     @State private var period: ReportPeriod = .day
     @State private var periodSummary = UsageSummary()
+    @State private var loadedPeriod: ReportPeriod?
+    @State private var loadError: String?
     private var summary: UsageSummary { period == .day ? monitor.summary : periodSummary }
     var body: some View {
         let used = monitor.summary.scopedSeconds
-        let percent = used / Double(monitor.preferences.quotaMinutes * 60) * 100
+        let limit = Double(monitor.preferences.quotaMinutes * 60)
+        let percent = used / max(1,limit) * 100
         let state = Graphite.state(percent: percent, preferences: monitor.preferences)
-        VStack(alignment: .leading, spacing: 15) {
+        let scoped = !monitor.preferences.selectedApps.isEmpty || monitor.preferences.websites.contains(where: \.enabled)
+        let recorded = !monitor.summary.applications.isEmpty
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("今天 · 使用概览").font(.system(size: 11)).foregroundStyle(Graphite.muted)
+                Text("使用概览").font(.system(size: 14, weight: .semibold))
                 Spacer()
-                Button { open("settings") } label: { Image(systemName: "gearshape") }
-                    .help("提醒设置").accessibilityLabel("提醒设置")
-                Button(action: close) { Image(systemName: "xmark") }.help("收起面板")
+                Button { open("settings") } label: { Image(systemName: "gearshape") }.accessibilityLabel("设置")
+                Button(action: close) { Image(systemName: "xmark").frame(width: 24,height: 24) }.accessibilityLabel("收起概览")
             }.buttonStyle(.plain)
-            HStack(alignment: .bottom) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("今天合计已用每日限额的").font(.system(size: 11)).foregroundStyle(Graphite.muted)
-                    HStack(alignment: .firstTextBaseline, spacing: 1) {
-                        Text("\(Int(percent))").font(.system(size: 35, weight: .medium))
-                        Text("%").font(.system(size: 16))
-                    }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(!recorded ? "今日所选用时" : !scoped ? "计入每日限额的项目" : used > limit ? "今日已超出限额" : "今日剩余限额")
+                    .font(.system(size: 12)).foregroundStyle(Graphite.muted)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(!recorded ? "暂无记录" : !scoped ? "尚未选择" : used == limit ? "额度已用尽" : UsageText.time(abs(limit-used)))
+                        .font(.system(size: 31, weight: .medium)).monospacedDigit()
+                    Spacer()
+                    Text(monitor.isPaused ? "已暂停" : !monitor.preferences.notificationsEnabled ? "提醒已停用" : !scoped ? "待设置" : !recorded ? "待记录" : state.0)
+                        .font(.system(size: 11)).foregroundStyle(state.1)
                 }
-                Spacer()
-                HStack(spacing: 6) { Circle().fill(state.1).frame(width: 7, height: 7); Text(state.0).font(.system(size: 11)).foregroundStyle(Graphite.muted) }.padding(.bottom, 6)
+                SmoothQuotaBar(fraction: percent/100, color: state.1)
+                HStack {
+                    Text(!recorded ? "产生第一条使用记录后显示限额进度。" : !scoped ? "已记录的应用仍可在下方查看。" : "所选已用 " + UsageText.time(used) + " / " + UsageText.time(limit))
+                    Spacer(); Text(recorded && scoped ? UsageText.percent(percent) : "—").monospacedDigit()
+                }.font(.system(size: 12)).foregroundStyle(Graphite.muted)
+                if !scoped { Button("选择应用或网站 →") { open("scope") }.buttonStyle(.link) }
+                else if monitor.isPaused { Button("继续记录 →", action: monitor.togglePause).buttonStyle(.link) }
             }
-            SmoothQuotaBar(fraction: percent / 100, color: state.1)
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("所选合计 · \(DurationText.format(used)) / \(monitor.preferences.quotaMinutes) 分钟")
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                Text(used < Double(monitor.preferences.quotaMinutes * 60) ? "剩余 \(DurationText.format(Double(monitor.preferences.quotaMinutes * 60) - used))" : "每日限额已用尽")
-                    .fixedSize()
-            }.font(.system(size: 12, weight: .medium)).foregroundStyle(Graphite.muted)
-            Picker("统计周期", selection: $period) { Text("今天").tag(ReportPeriod.day); Text("本周").tag(ReportPeriod.week); Text("累计").tag(ReportPeriod.all) }.pickerStyle(.segmented).labelsHidden()
-            HStack(alignment: .firstTextBaseline) {
-                Text("\(period == .day ? "今天" : period == .week ? "本周" : "累计") · 所有应用").font(.system(size: 11)).foregroundStyle(Graphite.muted)
-                Spacer()
-                Text(DurationText.format(summary.totalSeconds)).font(.system(size: 22, weight: .medium)).monospacedDigit()
-            }
-            Divider().overlay(Graphite.line)
-            HStack { Text("应用使用时间"); Spacer(); Text("全部 \(summary.applications.count) 个 · 按时长") }.font(.system(size: 10)).foregroundStyle(Graphite.muted)
-            if summary.applications.isEmpty {
-                VStack(spacing: 8) { Text("时间从现在开始记录"); Text("应用产生使用记录后会显示在这里").font(.system(size: 10)) }.font(.system(size: 12)).foregroundStyle(Graphite.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else { ScrollView { UsageRows(applications: summary.applications, compact: true) } }
+            Divider()
+            PeriodControl(period: $period, overview: true)
+            let ready = period == .day || loadedPeriod == period
             HStack {
-                Text("网站计入浏览器用时").font(.system(size: 9)).foregroundStyle(Graphite.muted)
-                Spacer()
-                Button("查看统计 ↗") { open("statistics") }.buttonStyle(.plain).font(.system(size: 11))
+                Text((period == .day ? "今日" : period == .week ? "本周" : "累计") + " · 全部应用").font(.system(size: 12)).foregroundStyle(Graphite.muted)
+                Spacer(); Text(ready ? UsageText.time(summary.totalSeconds) : "—").font(.system(size: 16,weight: .semibold)).monospacedDigit()
             }
-        }.padding(20).foregroundStyle(Graphite.ink).background(GraphiteSurface())
-            .task(id: monitor.reportRefreshKey(period: period, anchor: nil)) { await reload() }
-    }
-    private func reload() async {
-        guard period != .day else { return }
-        do {
-            let report = try await monitor.report(period: period, anchor: Date())
-            try Task.checkCancellation()
-            periodSummary = report.summary
-        } catch is CancellationError { }
-        catch { monitor.error = "无法读取概览：\(error.localizedDescription)" }
+            ScrollView {
+                if let loadError, period != .day { Text(loadError).font(.caption) }
+                else if !ready { ProgressView().controlSize(.small) }
+                else if summary.applications.isEmpty { Text("这个周期还没有应用记录").foregroundStyle(Graphite.muted) }
+                else { UsageRows(applications: summary.applications, compact: true) }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            HStack {
+                Text("网站用时已包含在浏览器内").foregroundStyle(Graphite.muted); Spacer()
+                Button("查看统计 ↗") { open("statistics") }.buttonStyle(.plain)
+            }.font(.system(size: 11))
+        }.padding(17).foregroundStyle(Graphite.ink).background(GraphiteSurface())
+            .task(id: monitor.reportRefreshKey(period: period, anchor: nil)) {
+                loadError = nil
+                guard period != .day else { return }
+                do {
+                    let report = try await monitor.report(period: period, anchor: Date()); try Task.checkCancellation()
+                    periodSummary = report.summary; loadedPeriod = period
+                } catch is CancellationError {} catch { if !Task.isCancelled { loadError = error.localizedDescription } }
+            }
     }
 }

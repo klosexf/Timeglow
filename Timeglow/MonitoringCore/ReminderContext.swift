@@ -76,6 +76,9 @@ struct ReminderReading: Equatable, Sendable {
         let current = !historical && !context.isTest && currentSeconds.isFinite && currentSeconds >= 0 && currentQuotaMinutes > 0
         let seconds = current ? currentSeconds : context.scopedSeconds
         let quota = current ? currentQuotaMinutes : context.quotaMinutes
+        if context.kind == .minutes, let seconds, seconds.isFinite {
+            return .init(value: Int(min(100_000, max(0, seconds / 60))), unit: "分钟", isHistorical: historical, usesCurrentUsage: current)
+        }
         if let seconds, seconds.isFinite, let quota, quota > 0 {
             let percentage = seconds / (Double(quota) * 60) * 100
             // Keep percentages above 100 visible while avoiding integer overflow on malformed data.

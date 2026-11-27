@@ -176,7 +176,10 @@ struct OptimizationTests {
         #expect(actual.trend.map(\.scoped) == expected.trend.map(\.scoped))
         #expect(actual.interval == expected.interval)
         let built = await repository.dayBuildCount
-        _ = try await repository.load(period: .all, anchor: now, now: now, preferences: prefs, checkpoint: [], revisions: [:], calendar: calendar)
+        let warm = try await repository.load(period: .all, anchor: now, now: now, preferences: prefs, checkpoint: [], revisions: [:], calendar: calendar)
+        #expect(actual.timesByDay[start]?.first?.seconds == 60)
+        #expect(warm.timesByDay[start]?.first?.seconds == 60)
+        #expect(warm.timesByDay[midnight]?.first?.seconds == 120)
         #expect(await repository.dayBuildCount == built + 1) // only today
 
         // Zero-duration correction retracts yesterday as well as today's presence.

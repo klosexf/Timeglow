@@ -257,11 +257,7 @@ final class MonitoringController {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.browserPermissions[bundleID] = result
-                if result == .allowed {
-                    var value = self.preferences
-                    value.enabledBrowsers.insert(bundleID)
-                    self.updatePreferences(value)
-                }
+
             }
         }
     }

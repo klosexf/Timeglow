@@ -27,7 +27,10 @@ actor UsageReportRepository {
     func load(period: ReportPeriod, anchor: Date, now: Date, preferences: MonitoringPreferences,
               checkpoint: [TrackingSegment], revisions: [Date: UInt64], calendar: Calendar = .current) throws -> UsageReport {
         try Task.checkCancellation()
-        let interval = period.interval(anchor: anchor, firstRecord: try store.firstRecordDate(), now: now, calendar: calendar)
+        let savedFirst = try store.firstRecordDate()
+        let liveFirst = checkpoint.lazy.filter { $0.kind == .application && $0.end > $0.start }.map(\.start).min()
+        let firstRecord = [savedFirst, liveFirst].compactMap { $0 }.min()
+        let interval = period.interval(anchor: anchor, firstRecord: firstRecord, now: now, calendar: calendar)
         let today = calendar.startOfDay(for: now)
         let scope = ReportScope(preferences)
         var dates: [Date] = [], missing: [Date] = []
@@ -61,7 +64,7 @@ actor UsageReportRepository {
                     let key = "quota:" + ISO8601DateFormatter.string(from: date, timeZone: calendar.timeZone, formatOptions: [.withFullDate])
                     if let data = try store.data(forKey: key), let quota = try? JSONDecoder().decode(Int.self, from: data) { quotas[date] = quota }
                 }
-                let report = try UsageReportBuilder.build(segments: Array(rows.values), interval: interval, period: period, now: now,
+                var report = try UsageReportBuilder.build(segments: Array(rows.values), interval: interval, period: period, now: now,
                     preferences: preferences, quotas: quotas, calendar: calendar) { daily, summary in
                     self.dayBuildCount += 1
                     if daily.date < today {
@@ -69,10 +72,11 @@ actor UsageReportRepository {
                         self.access &+= 1
                         self.cache[Key(day: daily.date, calendar: calendar, scope: scope, hourly: false)] = .init(
                             revision: revisions[daily.date, default: 0], report: .init(interval: .init(start: daily.date, end: next),
-                                summary: summary, days: [daily], trend: [.init(date: daily.date, total: daily.total, scoped: daily.scoped)], categories: []), access: self.access)
+                                summary: summary, days: [daily], trend: [.init(date: daily.date, total: daily.total, scoped: daily.scoped, hasRecord: daily.hasRecord)], categories: [], timesByDay: [daily.date: summary.applications.map(ApplicationTime.init)]), access: self.access)
                     }
                 }
                 trimCache()
+                report.firstRecord = firstRecord
                 return report
             }
             let buckets = try UsageReportBuilder.partition(Array(rows.values), from: first, to: end, component: .day, calendar: calendar)
@@ -94,8 +98,9 @@ actor UsageReportRepository {
             trimCache()
         }
         let reports = dates.compactMap { result[$0] }
-        if period == .day, let report = reports.first { return report }
-        return UsageReportBuilder.combine(reports, interval: interval)
+        var report = period == .day ? reports.first ?? UsageReportBuilder.combine([], interval: interval) : UsageReportBuilder.combine(reports, interval: interval)
+        report.firstRecord = firstRecord
+        return report
     }
 
     private func trimCache() {

@@ -12,6 +12,9 @@ struct BookmarkFace: View {
     let percent: Double
     let preferences: MonitoringPreferences
     let side: String
+    var paused = false
+    var recorded = true
+    var scoped = true
 
     private var shape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(
@@ -25,16 +28,18 @@ struct BookmarkFace: View {
     var body: some View {
         let value = max(0, percent.isFinite ? percent : 0)
         let state = Graphite.state(percent: value, preferences: preferences)
+        let status = paused ? "暂停" : !recorded ? "无记录" : !scoped ? "待选" : !preferences.notificationsEnabled ? "提醒关" : state.0
         let orb = value >= Double(preferences.spentPercent) ? "spent" : value >= Double(preferences.warningPercent) ? "warning" : "safe"
         let color = orb == "spent" ? Color(red: 241 / 255, green: 122 / 255, blue: 114 / 255)
             : orb == "warning" ? Color(red: 1, green: 178 / 255, blue: 100 / 255)
             : Color(red: 140 / 255, green: 205 / 255, blue: 154 / 255)
-        let filled = Int(ceil(Double(BookmarkLayout.tickCount) * min(1, floor(value) / 100)))
+        let filled = Int(ceil(Double(BookmarkLayout.tickCount) * min(1, value / 100)))
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                Image(nsImage: BookmarkOrb.image(for: orb))
-                    .resizable().interpolation(.high).frame(width: 20, height: 20)
-                Text(state.0).font(.custom("PingFangSC-Regular", size: 10)).fixedSize()
+                if !recorded || !scoped { Circle().fill(Graphite.muted.opacity(0.45)).frame(width: 9,height: 9).padding(.horizontal, 3) }
+                else if paused { Image(systemName: "pause.fill").font(.system(size: 11)).frame(width: 18, height: 20) }
+                else { Image(nsImage: BookmarkOrb.image(for: orb)).resizable().interpolation(.high).frame(width: status.count > 2 ? 16 : 20, height: 20) }
+                Text(status).font(.system(size: status.count > 2 ? 9 : 10)).fixedSize()
             }.frame(height: 20)
             VStack(spacing: 2) {
                 ForEach((0..<BookmarkLayout.tickCount).reversed(), id: \.self) { index in
@@ -43,10 +48,10 @@ struct BookmarkFace: View {
                 }
             }.padding(.top, 7)
             VStack(spacing: 0) {
-                Text("\(Int(value))%")
-                    .font(.custom("Menlo-Regular", size: 16))
+                Text(!recorded || !scoped ? "—" : value >= 1000 ? ">999%" : UsageText.percent(value))
+                    .font(.custom("Menlo-Regular", size: value >= 1000 ? 12 : value >= 100 ? 14 : 16))
                     .fixedSize().frame(height: 20)
-                Text("已用").font(.custom("PingFangSC-Regular", size: 9)).frame(height: 12)
+                Text(recorded && scoped ? "已用" : "今日").font(.custom("PingFangSC-Regular", size: 9)).frame(height: 12)
             }.padding(.top, 8)
             Spacer(minLength: 0)
         }
@@ -62,7 +67,7 @@ struct BookmarkFace: View {
         .clipShape(shape)
         .overlay(shape.strokeBorder(.white.opacity(0.28), lineWidth: 0.75))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(state.0)，所选应用和网站今天合计已用每日限额的 \(Int(value))%")
+        .accessibilityLabel(status + "，" + (recorded ? UsageText.percent(value) : "暂无记录"))
     }
 }
 

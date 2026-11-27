@@ -37,18 +37,24 @@ final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
         super.init()
         // Assign before launch completes so clicks that cold-launch the app are routed too.
         UNUserNotificationCenter.current().delegate = self
-        monitor.permissions.previewReminder = { [weak self] in self?.presentReminder($0) }
+        monitor.permissions.previewReminder = { [weak self] context, restore in self?.presentReminder(context, restoreEditor: restore) }
     }
 
-    private func presentReminder(_ context: ReminderContext) {
+    private func presentReminder(_ context: ReminderContext, restoreEditor: (() -> Void)? = nil) {
         guard finishedLaunching else {
             pendingReminder = context
             return
         }
         // Activating the app also raises an existing workspace. Order it out
         // before activation, preserving its unsaved settings draft in memory.
+        let origin = restoreEditor != nil && mainWindow?.isVisible == true ? mainWindow : nil
         mainWindow?.orderOut(nil)
-        reminderWindow.present(context, monitor: monitor)
+        reminderWindow.present(context, monitor: monitor) { [weak origin] in
+            guard let origin else { return }
+            NSApp.activate()
+            origin.makeKeyAndOrderFront(nil)
+            DispatchQueue.main.async { restoreEditor?() }
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -148,10 +154,17 @@ final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
     }
 
     func presentWorkspace(_ section: String) {
-        navigation.section = section
+        if section == "overview" { bookmarkWindows?.showOverview(); return }
+        if section == "today" {
+            navigation.period = .day
+            navigation.anchor = Date()
+            navigation.todayRequest += 1
+        }
+        if section == "scope" { navigation.scopeRequest += 1 }
+        navigation.section = ["scope", "settings"].contains(section) ? "settings" : "statistics"
         if mainWindow == nil {
             let frame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-            let window = WorkspaceWindow(contentRect: .init(x: 0, y: 0, width: min(1060, frame.width - 80), height: min(820, frame.height - 70)), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            let window = WorkspaceWindow(contentRect: .init(x: 0, y: 0, width: min(1060, frame.width - 80), height: min(803, frame.height)), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
             window.title = "Timeglow"
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
@@ -161,7 +174,7 @@ final class TimeglowAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelega
             window.isOpaque = false
             window.isReleasedWhenClosed = false
             window.delegate = self
-            window.contentMinSize = .init(width: 800, height: 620)
+            window.minSize = .init(width: 800, height: 620)
             window.appearance = NSAppearance(named: .darkAqua)
             window.contentView = NSHostingView(rootView: ContentView(monitor: monitor, navigation: navigation)
                 .ignoresSafeArea(.container, edges: .top))
@@ -192,7 +205,10 @@ private struct MonitoringMenu: View {
     let openWorkspace: (String) -> Void
     var body: some View {
         Text(monitor.state)
-        Text("今天全部应用 · \(DurationText.format(monitor.summary.totalSeconds))")
+        Button("今日所选已用 · \(DurationText.format(monitor.summary.scopedSeconds))") { openWorkspace("today") }
+        Divider()
+        Button("使用概览") { openWorkspace("overview") }
+        Button("查看使用统计") { openWorkspace("statistics") }
         Divider()
         Button("设置…") { openWorkspace("settings") }
         Button(monitor.isPaused ? "继续记录" : "暂停记录") { monitor.togglePause() }

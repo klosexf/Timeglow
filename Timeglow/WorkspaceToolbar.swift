@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 
 enum WorkspaceStyle {
-    static let toolbarHeight: CGFloat = 56
+    static let toolbarHeight: CGFloat = 55
     static let pageInset: CGFloat = 28
-    static let cardGap: CGFloat = 16
+    static let cardGap: CGFloat = 14
 }
 
 // This workspace is an AppKit-owned NSWindow. Handle titlebar background
@@ -52,7 +52,7 @@ struct WorkspaceToolbar: View {
                             .padding(.horizontal, 5).padding(.vertical, 2)
                             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Graphite.line, lineWidth: 1))
                     }
-                }.padding(.leading, 22).allowsHitTesting(false)
+                }.padding(.leading, 16).allowsHitTesting(false)
                 Spacer(minLength: 0)
                 HStack(spacing: 13) {
                     HStack(spacing: 7) {
@@ -77,7 +77,7 @@ struct WorkspaceToolbar: View {
             }
             HStack(spacing: 2) {
                 section("statistics", title: "使用统计", icon: "chart.bar")
-                section("settings", title: "提醒设置", icon: "bell")
+                section("settings", title: "设置", icon: "gearshape")
             }
             .padding(3)
             .background(.black.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
@@ -85,7 +85,7 @@ struct WorkspaceToolbar: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("主导航")
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, 20)
         .frame(height: WorkspaceStyle.toolbarHeight)
         .background(.white.opacity(0.018))
         .overlay(alignment: .bottom) { Rectangle().fill(Graphite.line).frame(height: 1) }
@@ -98,11 +98,40 @@ struct WorkspaceToolbar: View {
             HStack(spacing: 7) {
                 Image(systemName: icon).font(.system(size: 13))
                 Text(title).font(.system(size: 12))
-            }.frame(width: 100, height: 32)
+            }.frame(width: 90, height: 28)
         }
         .buttonStyle(WorkspaceSelectionButtonStyle(selected: selected))
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("workspace.\(id)")
+    }
+}
+
+struct PeriodControl: View {
+    @Binding var period: ReportPeriod
+    let overview: Bool
+    @FocusState private var focus: ReportPeriod?
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(ReportPeriod.allCases) { item in
+                Button {
+                    period = item
+                } label: {
+                    Text(overview && item != .all ? (item == .week ? "本周" : "今日") : item.title)
+                        .font(.system(size: 12)).frame(maxWidth: .infinity).frame(height: 24)
+                }.buttonStyle(WorkspaceSelectionButtonStyle(selected: item == period))
+                    .focused($focus, equals: item)
+                    .accessibilityAddTraits(item == period ? .isSelected : [])
+            }
+        }.padding(2).background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Graphite.line, lineWidth: 1))
+            .accessibilityElement(children: .contain).accessibilityLabel(overview ? "应用排行的统计周期" : "统计周期")
+            .onMoveCommand { direction in
+                let items = ReportPeriod.allCases
+                guard focus != nil, let index = items.firstIndex(of: period), direction == .left || direction == .right else { return }
+                period = items[(index + (direction == .right ? 1 : items.count - 1)) % items.count]
+                focus = period
+            }
     }
 }
 
@@ -129,7 +158,7 @@ struct WorkspaceSelectionButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(selected ? Graphite.ink : Graphite.muted)
-            .background(.white.opacity(configuration.isPressed ? 0.13 : selected ? 0.08 : hovering ? 0.035 : 0), in: RoundedRectangle(cornerRadius: 5))
+            .background(.white.opacity(configuration.isPressed ? 0.13 : selected ? 0.16 : hovering ? 0.035 : 0), in: RoundedRectangle(cornerRadius: 5))
             .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.white.opacity(selected ? 0.035 : 0), lineWidth: 1))
             .contentShape(RoundedRectangle(cornerRadius: 5))
             .onHover { hovering = $0 }

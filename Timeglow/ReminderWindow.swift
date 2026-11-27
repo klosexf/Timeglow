@@ -5,7 +5,10 @@ import SwiftUI
 final class ReminderWindowController: NSObject, NSWindowDelegate {
     private var window: NSPanel?
 
-    func present(_ context: ReminderContext, monitor: MonitoringController) {
+    private var onClose: (() -> Void)?
+
+    func present(_ context: ReminderContext, monitor: MonitoringController, onClose: @escaping () -> Void) {
+        self.onClose = onClose
         let panel: NSPanel
         if let existing = window {
             panel = existing
@@ -33,8 +36,8 @@ final class ReminderWindowController: NSObject, NSWindowDelegate {
         let fitting = view.fittingSize
         panel.setContentSize(.init(width: ReminderStyle.width, height: fitting.height))
         if !panel.isVisible { panel.center() }
-        panel.makeKeyAndOrderFront(nil)
         NSApp.activate()
+        panel.makeKeyAndOrderFront(nil)
     }
 
     func close() { window?.close() }
@@ -43,6 +46,9 @@ final class ReminderWindowController: NSObject, NSWindowDelegate {
         // Release the observer hierarchy rather than refreshing a hidden reminder window.
         window?.contentView = nil
         window = nil
+        let completion = onClose
+        onClose = nil
+        completion?()
     }
 }
 
@@ -50,7 +56,10 @@ private final class ReminderPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    override func cancelOperation(_ sender: Any?) { close() }
+
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown && event.keyCode == 53 { close(); return }
         if event.type == .leftMouseDown, event.clickCount == 1, let contentView,
            event.locationInWindow.y > contentView.bounds.height - 50,
            event.locationInWindow.x < contentView.bounds.width - 55 {
@@ -63,9 +72,9 @@ private final class ReminderPanel: NSPanel {
 
 @MainActor
 private enum ReminderStyle {
-    static let width: CGFloat = 540
-    static let inset: CGFloat = 39
-    static let numberSize: CGFloat = 89
+    static let width: CGFloat = 470
+    static let inset: CGFloat = 30
+    static let numberSize: CGFloat = 76
     static let ruleGap: CGFloat = 8
     // The app icon artwork includes a light presentation margin. Crop that margin
     // in the in-app header, then mask the original graphite rounded tile.
@@ -91,7 +100,7 @@ private struct ReminderView: View {
 
     private var contextText: String {
         let node = "\(context.node)\(context.kind == .percent ? "%" : " 分钟") 节点提醒"
-        if context.isTest { return "测试提醒 · \(node)" }
+        if context.isTest { return "提醒预览 · \(node)" }
         if reading.isHistorical { return "\(context.day) · 历史提醒记录" }
         let time = context.triggeredAt.map { $0.formatted(.dateTime.hour().minute()) }
         return [time, node].compactMap { $0 }.joined(separator: " · ")
@@ -104,7 +113,7 @@ private struct ReminderView: View {
                     .scaleEffect(ReminderStyle.headerIconScale)
                     .clipShape(RoundedRectangle(cornerRadius: ReminderStyle.headerIconRadius, style: .continuous))
                     .accessibilityHidden(true)
-                Text("Timeglow / 给自己的提醒").font(.system(size: 11)).foregroundStyle(Graphite.muted)
+                Text("给自己的提醒").font(.system(size: 13, weight: .semibold)).foregroundStyle(Graphite.muted)
                 Spacer()
                 Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 12)).frame(width: 27, height: 27) }
                     .buttonStyle(.plain).foregroundStyle(Graphite.muted).accessibilityLabel("关闭提醒")
@@ -112,53 +121,34 @@ private struct ReminderView: View {
             .padding(.horizontal, 22).padding(.top, 18).padding(.bottom, 7)
 
             VStack(spacing: 0) {
-                Text(contextText).font(.system(size: 10)).foregroundStyle(Graphite.muted)
+                Text(contextText).font(.system(size: 12)).foregroundStyle(Graphite.muted)
                 Text(reading.unit == "%" ? (reading.usesCurrentUsage ? "当前已用每日限额的" : "提醒发出时已用每日限额的") : "这次提醒的累计用时")
-                    .font(.system(size: 12)).foregroundStyle(Graphite.muted).padding(.top, 24)
+                    .font(.system(size: 12)).foregroundStyle(Graphite.muted).padding(.top, 10)
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     Text("\(reading.value)").font(.system(size: ReminderStyle.numberSize, weight: .regular)).tracking(-5)
-                    Text(reading.unit).font(.system(size: reading.unit == "%" ? 31 : 22, weight: .regular))
+                    Text(reading.unit).font(.system(size: reading.unit == "%" ? 25 : 22, weight: .regular))
                 }
                 .monospacedDigit().foregroundStyle(Graphite.ink)
-                .frame(height: 100).padding(.top, 5)
+                .frame(height: 86).padding(.top, 5)
                 .accessibilityElement(children: .ignore).accessibilityLabel("已用 \(reading.value)\(reading.unit)")
-
-                if reading.usesCurrentUsage && context.kind == .percent && context.node != reading.value {
-                    Text("提醒在 \(context.node)% 时发出")
-                        .font(.system(size: 10)).foregroundStyle(Graphite.muted).padding(.top, 8)
-                }
 
                 Rectangle().fill(Graphite.muted.opacity(0.35)).frame(width: 28, height: 1)
                     .padding(.top, ReminderStyle.ruleGap).padding(.bottom, 17)
 
-                Text(context.message)
-                    .font(.system(size: 17)).lineSpacing(10)
-                    .foregroundStyle(Graphite.ink).frame(maxWidth: .infinity, alignment: .leading)
+                ViewThatFits(in: .vertical) {
+                    reminderText
+                    ScrollView { reminderText }
+                }.frame(maxHeight: max(88, min(220, (NSScreen.main?.visibleFrame.height ?? 720) - 315)))
                     .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-
-                VStack(spacing: 7) {
-                    Button(action: dismiss) {
-                        HStack(spacing: 9) {
-                            Text("💪").font(.system(size: 21))
-                            Text("我可以做到").font(.system(size: 14, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity).frame(height: 48)
+                Button(action: dismiss) {
+                    Text("知道了").font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity).frame(height: 39)
                         .foregroundStyle(ReminderStyle.primaryInk)
-                        .background(ReminderStyle.primary, in: RoundedRectangle(cornerRadius: 9))
-                        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                        .contentShape(RoundedRectangle(cornerRadius: 9))
-                    }
-                    .buttonStyle(.plain).keyboardShortcut(.defaultAction)
-                    .accessibilityLabel("我可以做到").accessibilityIdentifier("reminder.accept")
-                    Button("我不听", action: dismiss)
-                        .font(.system(size: 12)).foregroundStyle(Graphite.muted)
-                        .padding(.horizontal, 17).frame(minHeight: 32)
-                        .buttonStyle(.plain).keyboardShortcut(.cancelAction)
-                        .accessibilityIdentifier("reminder.dismiss")
-                }.padding(.top, 27)
+                        .background(ReminderStyle.primary, in: RoundedRectangle(cornerRadius: 7))
+                }.buttonStyle(.plain).keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("reminder.accept").padding(.top, 20)
             }
-            .padding(.horizontal, ReminderStyle.inset).padding(.top, 17).padding(.bottom, 28)
+            .padding(.horizontal, ReminderStyle.inset).padding(.top, 8).padding(.bottom, 22)
         }
         .frame(width: ReminderStyle.width)
         .background {
@@ -167,5 +157,9 @@ private struct ReminderView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 17))
         }
         .preferredColorScheme(.dark)
+    }
+    private var reminderText: some View {
+        Text(context.message).font(.system(size: 16)).lineSpacing(6)
+            .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
     }
 }

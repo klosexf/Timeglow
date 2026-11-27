@@ -10,6 +10,7 @@ enum UsageReportBuilder {
         var days: [DailyUsage] = [], trend: [UsageTrendPoint] = []
         var apps: [String: ApplicationUsage] = [:]
         var sites: [String: [String: Double]] = [:]
+        var timesByDay: [Date: [ApplicationTime]] = [:]
         var scoped = 0.0
         var date = interval.start
         while date < interval.end {
@@ -27,6 +28,7 @@ enum UsageReportBuilder {
             }
             let daily = DailyUsage(date: date, total: summary.totalSeconds, scoped: summary.scopedSeconds, quotaMinutes: quotas[date] ?? preferences.quotaMinutes, hasRecord: rows.contains { $0.kind == .application })
             days.append(daily)
+            timesByDay[date] = summary.applications.map(ApplicationTime.init)
             onDay?(daily, summary)
             date = next
         }
@@ -37,10 +39,10 @@ enum UsageReportBuilder {
                 try Task.checkCancellation()
                 let next = calendar.date(byAdding: .hour, value: 1, to: date)!
                 let summary = UsageCalculator.summarize(hours[date] ?? [], from: date, to: min(next, end), preferences: preferences)
-                trend.append(.init(date: date, total: summary.totalSeconds, scoped: summary.scopedSeconds))
+                trend.append(.init(date: date, total: summary.totalSeconds, scoped: summary.scopedSeconds, hasRecord: hours[date]?.contains { $0.kind == .application } == true))
                 date = next
             }
-        } else { trend = days.map { .init(date: $0.date, total: $0.total, scoped: $0.scoped) } }
+        } else { trend = days.map { .init(date: $0.date, total: $0.total, scoped: $0.scoped, hasRecord: $0.hasRecord) } }
         var applications: [ApplicationUsage] = []
         for var app in apps.values {
             let values: [String: Double] = sites[app.id] ?? [:]
@@ -51,7 +53,7 @@ enum UsageReportBuilder {
         applications.sort { $0.seconds == $1.seconds ? $0.name < $1.name : $0.seconds > $1.seconds }
         var totals: [String: Double] = [:]
         for app in applications { totals[UsageReport.category(bundleID: app.id, name: app.name), default: 0] += app.seconds }
-        return .init(interval: interval, summary: .init(applications: applications, scopedSeconds: scoped), days: days, trend: trend, categories: totals.map { .init(name: $0.key, seconds: $0.value) }.sorted { $0.seconds > $1.seconds })
+        return .init(interval: interval, summary: .init(applications: applications, scopedSeconds: scoped), days: days, trend: trend, categories: totals.map { .init(name: $0.key, seconds: $0.value) }.sorted { $0.seconds > $1.seconds }, timesByDay: timesByDay)
     }
 
     static func combine(_ reports: [UsageReport], interval: DateInterval) -> UsageReport {
@@ -77,7 +79,8 @@ enum UsageReportBuilder {
         return .init(interval: interval,
                      summary: .init(applications: applications, scopedSeconds: reports.reduce(0) { $0 + $1.summary.scopedSeconds }),
                      days: reports.flatMap(\.days), trend: reports.flatMap(\.trend),
-                     categories: categories.map { .init(name: $0.key, seconds: $0.value) }.sorted { $0.seconds > $1.seconds })
+                     categories: categories.map { .init(name: $0.key, seconds: $0.value) }.sorted { $0.seconds > $1.seconds },
+                     timesByDay: reports.reduce(into: [:]) { $0.merge($1.timesByDay) { first, _ in first } })
     }
 
     static func partition(_ segments: [TrackingSegment], from: Date, to: Date, component: Calendar.Component, calendar: Calendar) throws -> [Date: [TrackingSegment]] {
